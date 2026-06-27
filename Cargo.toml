@@ -1,0 +1,70 @@
+[package]
+name = "vaibot"
+version = "0.3.0"
+edition = "2021"
+rust-version = "1.80"
+description = "VAIBot front-door CLI: one installer/supervisor for guard, gateway, plugins, policy, and MCP across the machine-intelligence lifecycle."
+license = "MIT"
+authors = ["Campbell Labs LLC"]
+repository = "https://github.com/vaibot-io/command-cli"
+readme = "README.md"
+keywords = ["llm", "cli", "governance", "provenance", "security"]
+categories = ["command-line-utilities"]
+
+# Standalone: explicitly NOT part of any parent workspace (own Cargo.lock).
+[workspace]
+
+[[bin]]
+name = "vaibot"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+
+# OAuth 2.1: PKCE auth-code + RFC 8628 device flow.
+oauth2 = "5"
+tiny_http = "0.12"        # one-shot 127.0.0.1:0 loopback callback
+open = "5"                # browser launch
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.22"
+url = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml = "0.9"        # policy authoring -> canonical JSON
+
+directories = "5"         # ~/.vaibot via XDG/ProjectDirs
+tempfile = "3"            # atomic 0600 writes
+whoami = "1"              # username + hostname for the bootstrap machine fingerprint
+
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde", "clock"], default-features = false }
+
+nix = { version = "0.29", features = ["signal"] }   # SIGINT/SIGTERM -> child
+
+# dyn-safe async broker trait (the broker is held as &'static dyn CredentialBroker).
+async-trait = "0.1"
+
+futures-util = "0.3"      # SSE byte-stream for provenance tail
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+anyhow = "1"
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"
+wiremock = "0.6"         # mock oauth.vaibot.io + v2 API
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }
+assert_cmd = "2"
+predicates = "3"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
