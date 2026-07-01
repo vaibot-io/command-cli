@@ -100,15 +100,14 @@ update` then `claude plugin update vaibot-governance@vaibot-claudecode`; for Cod
 > self-heals on install: the current **published** plugin's `postinstall` strips
 > the rejected `path` key and rewrites a valid config (writing a `.bak` first), so
 > a freshly installed or updated plugin repairs the corruption rather than tripping
-> over it. (Version 0.2.7, not yet published, hardens this further — it strips the
-> rejected `path` from *every* plugin entry, not just its own, and refuses to
-> overwrite an `openclaw.json` it cannot parse — but you do not need to wait for
-> it.) If a machine is *already* stuck — OpenClaw can't even run to install the
+> over it. The current GA plugin (1.0.0) hardens this further — it strips the rejected
+> `path` from *every* plugin entry, not just its own, and refuses to overwrite an
+> `openclaw.json` it cannot parse. If a machine is *already* stuck — OpenClaw can't even run to install the
 > update — repair it once with a direct npm install (runs the plugin's
 > `postinstall`, bypassing OpenClaw's config load):
 >
 > ```bash
-> npm install -g @vaibot/circuit-breaker-openclaw-plugin@latest
+> npm install -g @vaibot/circuit-breaker-openclaw-plugin@^1.0.0
 > ```
 >
 > (Or delete the `"path": "…"` line from the `circuit-breaker-openclaw-plugin`
@@ -133,15 +132,32 @@ vaibot doctor                        # /v1/policy line should now be reachable
 If `restart` isn't enough (the on-disk guard itself is old):
 
 ```bash
-npm install -g @vaibot/guard@latest  # refresh the npm-global guard (confirm the systemd
-                                     # unit's ExecStart points at this binary; if it
+npm install -g @vaibot/guard@^2.0.0  # refresh the npm-global guard to the 2.x GA (confirm the
+                                     # systemd unit's ExecStart points at this binary; if it
                                      # launches a different copy, this won't update it)
 vaibot guard restart
 ```
 
 > Do **not** `systemctl --user stop`/`disable` the guard or kill `:39111`. The
-> floor stops being enforced while it's down. `restart` keeps enforcement
+> floor stops being governed while it's down. `restart` keeps governance
 > continuous.
+
+---
+
+## 4b. Re-apply your floor for the 2.x recalibration
+
+Guard **2.x** ships the recalibrated **balanced** posture — *"medium = safe"*:
+routine commands (installs, builds, tests, unknown commands) run freely, and only
+genuinely high-risk actions pause for approval (outbound network / egress,
+`git push`, package publish, deploys, `sudo`/`su`, out-of-workspace or secret-dir
+writes). The threshold that drives this lives in your **signed policy bundle**, so a
+bundle signed before 2.0 lacks it and the guard falls back to the stricter default.
+**Re-apply your floor once** to pick it up:
+
+```bash
+vaibot policy preset balanced      # or your chosen floor: strict | permissive
+vaibot policy show                 # confirm the active floor + posture
+```
 
 ---
 
@@ -168,6 +184,7 @@ vaibot mcp status            # all detected agents → registered
 
 ```bash
 vaibot doctor
+vaibot mode show                             # live governance mode (observe | enforce)
 systemctl --user is-active vaibot-guard      # STILL active — never went down
 vaibot mcp status                            # registered everywhere
 vaibot status                                # env production, vb_live_… key
@@ -183,9 +200,9 @@ shows the plugin installed, and `mcp status` shows `registered`.
 | Symptom | Cause / Fix |
 |---|---|
 | `✗ VAIBot runs only in the production environment` (a command is refused, exit 1) | A component is non-production. If your shell is forcing it: `unset VAIBOT_ENV VAIBOT_API_URL` (`VAIBOT_ENV` wins if set) and drop any `vb_stg_` `VAIBOT_API_KEY`. Then `vaibot init` to reconcile guard + MCP to production. `status`/`doctor` still run — use `doctor` to see which component is off. Admin/enterprise accounts are exempt; admins testing staging: prefix with `VAIBOT_ADMIN_OVERRIDE=1`. |
-| `guard /v1/policy: HTTP 404 (outdated build)` | Stale daemon. `vaibot guard restart`; if needed `npm i -g @vaibot/guard@latest` then restart. Never stop/kill it. |
+| `guard /v1/policy: HTTP 404 (outdated build)` | Stale daemon. `vaibot guard restart`; if needed `npm i -g @vaibot/guard@^2.0.0` then restart. Never stop/kill it. |
 | `could not send magic link: unauthorized` when claiming email | Key/API-base env mismatch (e.g. a `vb_stg_` key resolving against prod, or vice-versa). `vaibot status` should show matching env + key prefix (`production` ↔ `vb_live_`). |
-| OpenClaw: `Unrecognized key: "path"` | Legacy-build corruption (a `path` key current OpenClaw rejects). The current published plugin's installer self-heals it — repair once with `npm i -g @vaibot/circuit-breaker-openclaw-plugin@latest` (writes a `.bak`). See the OpenClaw side note under step 3. |
+| OpenClaw: `Unrecognized key: "path"` | Legacy-build corruption (a `path` key current OpenClaw rejects). The current published plugin's installer self-heals it — repair once with `npm i -g @vaibot/circuit-breaker-openclaw-plugin@^1.0.0` (writes a `.bak`). See the OpenClaw side note under step 3. |
 | Codex MCP tools 401 | `$VAIBOT_API_KEY` not exported where Codex runs — see step 5. |
 | Two guard processes / port `:39111` conflict | You started a second guard. Stop the *extra* one only; the singleton/systemd unit owns `:39111`. The CLI and all plugins adopt one daemon — never run your own. |
 | `vaibot mcp status` shows a host as `not registered` after connect | That agent's CLI errored during `add`/`set` — re-run `vaibot mcp connect <host>` and read the host CLI output. |

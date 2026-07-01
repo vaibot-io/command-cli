@@ -55,22 +55,45 @@ This single command, in order:
    Enter to skip and claim later from the dashboard.
 3. Installs the **guard** (`@vaibot/guard`), writes its env file
    (`~/.config/vaibot-guard/vaibot-guard.env`), and enables the systemd user
-   service. The guard enforces your governance floor locally from the start.
+   service. The guard governs your tool calls locally from the start, writing a
+   tamper-evident receipt for each.
 4. Detects your agent CLIs and asks **“Wire <agent> now?”** for each — answer
    **Y** to install the circuit-breaker plugin for that agent.
 
 > `vaibot init` never generates signing keys and never mentions Fly.io — those
 > were operator/self-host concerns and are off the customer path.
 
-**One-shot variant** (auto-wire MCP too, no per-agent prompt for MCP):
+**One-shot variant** (auto-wire MCP + set the floor, no per-agent MCP prompt):
 
 ```bash
-vaibot init --with-mcp
+vaibot init --with-mcp --preset balanced
 ```
 
 ---
 
-## 3. Connect the MCP governance tools
+## 3. Set your governance floor + mode
+
+`init` sets a **floor** — the baseline policy the guard applies. Pick one at the
+prompt, pass `--preset`, or set it any time:
+
+```bash
+vaibot init --preset balanced      # or later: vaibot policy preset balanced
+```
+
+- **balanced** (recommended) — routine commands (installs, builds, tests, unknown
+  commands) run freely; only genuinely high-risk actions pause for approval:
+  outbound network / egress, `git push`, package publish, deploys, `sudo`/`su`,
+  and out-of-workspace or secret-dir writes. **strict** adds outbound-network /
+  privilege / secret-read denials and asks on installs; **permissive** only blocks
+  the catastrophic floor (e.g. `rm -rf /`, `curl … | sh`).
+- New free-tier accounts start in **observe** mode — the guard classifies every
+  tool call and writes a receipt, but does **not** block. Flip to **enforce** (so
+  `ask`/`deny` actually stop the agent) from the dashboard: `vaibot mode enforce`
+  opens it, `vaibot mode show` reports the live mode.
+
+---
+
+## 4. Connect the MCP governance tools
 
 If you didn't use `--with-mcp`, register the VAIBot MCP server (15 governance
 tools: status, pending, approve, deny, receipts, policy, …) with every detected
@@ -94,14 +117,14 @@ vaibot mcp connect
 
 ---
 
-## 4. Claim your account (if you skipped step 2)
+## 5. Claim your account (if you skipped step 2)
 
 Run `vaibot init` again and enter your email at the prompt, or claim from the
 dashboard. Until claimed, `vaibot status` shows the account as `(unclaimed)`.
 
 ---
 
-## 5. Verify
+## 6. Verify
 
 ```bash
 vaibot status        # Env production · api.vaibot.io reachable · vb_live_… · quota
@@ -128,7 +151,7 @@ A healthy fresh install shows:
 | `✗ Staging is reserved for admin + enterprise accounts` (init refused) | `vaibot init` is production-only and ignores a staging shell override, so plain `init` is what you want. `--env staging` is gated — admins testing staging: `VAIBOT_ADMIN_OVERRIDE=1 vaibot init --env staging`. |
 | A command other than init/status/doctor is refused with `✗ VAIBot runs only in the production environment` | A component drifted to staging. `unset VAIBOT_ENV VAIBOT_API_URL`, then `vaibot init` to reconcile. |
 | `doctor`: `guard /v1/policy: HTTP 404 — outdated build` | The guard daemon predates the `/v1/policy` route. `vaibot guard restart` (or reinstall `@vaibot/guard`). |
-| Codex MCP tools 401 / “not authenticated” | `$VAIBOT_API_KEY` isn't exported in the shell Codex runs in (see step 3). |
+| Codex MCP tools 401 / “not authenticated” | `$VAIBOT_API_KEY` isn't exported in the shell Codex runs in (see step 4). |
 | `could not send magic link: unauthorized` | Your key and API base disagree (e.g. a staging key on prod). On a clean machine this shouldn't happen; verify `vaibot status` shows `production` + a `vb_live_…` key. |
 | OpenClaw plugin “not detected after install” | See the existing-machine playbook's OpenClaw section — usually a stale `path` key in `~/.openclaw/openclaw.json`. |
 
