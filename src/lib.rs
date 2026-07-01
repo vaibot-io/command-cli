@@ -44,6 +44,9 @@ fn is_env_gate_exempt(cmd: &Command) -> bool {
 /// binary can map it to the documented exit code.
 pub async fn dispatch(cli: Cli) -> Result<(), CliError> {
     let api_url = cli.api_url.clone();
+    // §5: vet any PRODUCTION url override first — runs for every command (even the
+    // env-gate-exempt ones) so an established prod key can't be diverted by an env var.
+    commands::enforce_url_override_policy(api_url.as_deref()).await?;
     // Production-only gate (admin/enterprise + VAIBOT_ADMIN_OVERRIDE exempt).
     commands::enforce_production_env(is_env_gate_exempt(&cli.command), api_url.as_deref()).await?;
     match cli.command {

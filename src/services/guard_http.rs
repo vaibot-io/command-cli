@@ -62,6 +62,73 @@ pub fn resolve_guard_base_url() -> String {
     format!("http://127.0.0.1:{GUARD_SINGLETON_PORT}")
 }
 
+/// Read the guard-published effective enforce/observe mode from the rendezvous
+/// file (`~/.vaibot/guard/guard.json` → `effective_mode`). The guard is the single
+/// source of truth and stamps the server-resolved mode here; this is the
+/// offline-readable, request-free surface. Returns `None` when the file is absent
+/// or predates the field (an older guard) — callers fall back to their own view.
+pub fn read_guard_mode() -> Option<String> {
+    let base = BaseDirs::new()?;
+    let lock = base.home_dir().join(".vaibot").join("guard").join("guard.json");
+    let raw = std::fs::read_to_string(&lock).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    match v.get("effective_mode").and_then(|m| m.as_str()) {
+        Some("observe") => Some("observe".to_string()),
+        Some("enforce") => Some("enforce".to_string()),
+        _ => None,
+    }
+}
+
+/// Read the guard-published resolved env from the rendezvous file
+/// (`~/.vaibot/guard/guard.json` → `env`). v3 guards publish this so the CLI's
+/// production-coherence gate has a signal even though the de-pinned env file no
+/// longer carries a `VAIBOT_POLICY_URL` to infer it from. `None` for a pre-v3 guard
+/// that doesn't publish the field (callers fall back to the env-file parse).
+pub fn read_guard_env() -> Option<String> {
+    let base = BaseDirs::new()?;
+    let lock = base.home_dir().join(".vaibot").join("guard").join("guard.json");
+    let raw = std::fs::read_to_string(&lock).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    match v.get("env").and_then(|m| m.as_str()) {
+        Some("production") => Some("production".to_string()),
+        Some("staging") => Some("staging".to_string()),
+        _ => None,
+    }
+}
+
+/// Read the guard rendezvous token (`guard.json` → `token`), needed to auth POSTs.
+fn read_guard_token() -> Option<String> {
+    let base = BaseDirs::new()?;
+    let lock = base.home_dir().join(".vaibot").join("guard").join("guard.json");
+    let raw = std::fs::read_to_string(&lock).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    v.get("token").and_then(|t| t.as_str()).filter(|s| !s.is_empty()).map(String::from)
+}
+
+/// Force the guard to re-poll the control-plane account mode NOW
+/// (`POST /v1/mode/refresh`). Returns the `effective_mode` the guard enforces AFTER
+/// the re-poll — so the CLI display reflects the live, just-applied enforcement state.
+/// `Err("HTTP <code>")` ⇒ the guard answered but lacks the route (older build);
+/// anything else ⇒ unreachable.
+pub async fn refresh_guard_mode() -> Result<String, CliError> {
+    let base = resolve_guard_base_url();
+    let client = http_client()?;
+    let mut req = client.post(format!("{base}/v1/mode/refresh"));
+    if let Some(tok) = read_guard_token() {
+        req = req.bearer_auth(tok);
+    }
+    let resp = req.send().await.map_err(|_| CliError::Runtime("guard unreachable".into()))?;
+    if !resp.status().is_success() {
+        return Err(CliError::Runtime(format!("HTTP {}", resp.status().as_u16())));
+    }
+    let v: serde_json::Value =
+        resp.json().await.map_err(|_| CliError::Runtime("invalid guard response".into()))?;
+    v.get("effective_mode")
+        .and_then(|m| m.as_str())
+        .map(String::from)
+        .ok_or_else(|| CliError::Runtime("guard response missing effective_mode".into()))
+}
+
 fn http_client() -> Result<reqwest::Client, CliError> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(3))

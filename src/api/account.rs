@@ -76,6 +76,12 @@ impl MeResponse {
                 .as_deref()
                 .is_some_and(|p| p.eq_ignore_ascii_case("enterprise"))
     }
+
+    /// Server-authoritative admin. Stricter than `is_env_exempt` (enterprise is
+    /// NOT admin): §5 admits a PRODUCTION URL override only for an admin account.
+    pub fn is_admin(&self) -> bool {
+        self.admin == Some(true)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -154,6 +160,15 @@ mod tests {
         assert!(!me(Some("free"), Some(false)).is_env_exempt()); // self-serve
         assert!(!me(Some("govern"), None).is_env_exempt());
         assert!(!me(None, None).is_env_exempt()); // older API (no fields) ⇒ not exempt
+    }
+
+    #[test]
+    fn is_admin_is_stricter_than_env_exempt() {
+        // §5 prod URL override needs admin specifically — enterprise is NOT enough.
+        assert!(me(None, Some(true)).is_admin());
+        assert!(!me(Some("enterprise"), None).is_admin()); // exempt for env, but not admin
+        assert!(!me(Some("enterprise"), Some(false)).is_admin());
+        assert!(!me(None, None).is_admin());
     }
 
     #[test]

@@ -192,6 +192,7 @@ pub fn persist_api_key(env: VaibotEnv, api_key: String) -> Result<(), CliError> 
         CredRecord {
             api_key,
             wallet_address: None,
+            ..Default::default()
         },
     )
     .map(|_| ())
