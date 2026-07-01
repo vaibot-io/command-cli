@@ -6,7 +6,7 @@
 
 use clap::Subcommand;
 
-use crate::config::creds::{api_base_for_env, load_store, resolve_credentials};
+use crate::config::creds::{load_store, resolve_credentials};
 use crate::config::{credentials_path, ProcessEnv};
 use crate::error::CliError;
 use crate::services::host::Host;
@@ -203,11 +203,10 @@ fn verify_after(h: Host, expect: bool) -> Result<(), CliError> {
 fn ensure_guard() -> Result<(), CliError> {
     let store = load_store(&credentials_path(&ProcessEnv));
     let resolved = resolve_credentials(&ProcessEnv, &store);
-    match resolved.api_key.clone() {
-        Some(key) => {
-            let base = api_base_for_env(resolved.env, Some(&resolved.api_base_url));
-            setup::install_guard(resolved.env, &base, &key)
-        }
+    match resolved.api_key {
+        // The guard self-derives key + bases from the creds store (v3); we only
+        // gate on a resolvable key to fail fast with a clear message.
+        Some(_) => setup::install_guard(),
         None => {
             println!("[fail] No API key found. Run `vaibot init` or `vaibot login` first.");
             Err(CliError::Runtime("no api key".into()))
@@ -218,9 +217,9 @@ fn ensure_guard() -> Result<(), CliError> {
 fn update_guard() {
     println!("[step] Updating the guard (npm)...");
     if installer::install_guard_skill() {
-        println!("[ok]   Guard updated (npm i -g @vaibot/guard)");
+        println!("[ok]   Guard updated (npm i -g {})", installer::GUARD_NPM_SPEC);
     } else {
-        println!("[warn] Could not update the guard — try: npm install -g @vaibot/guard");
+        println!("[warn] Could not update the guard — try: npm install -g {}", installer::GUARD_NPM_SPEC);
     }
     println!("[step] Restarting guard service...");
     if installer::restart_systemd_service() {

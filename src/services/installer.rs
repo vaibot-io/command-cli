@@ -9,9 +9,14 @@ use std::path::PathBuf;
 
 use super::{run_capture, which};
 use crate::config::atomic::write_atomic_0600;
-use crate::config::creds::VaibotEnv;
 use crate::config::{guard_env_path, guard_log_dir};
 use crate::error::CliError;
+
+/// The npm spec the guard is installed from — the single place to bump on each
+/// guard release. `@^2.0.0` takes the latest 2.x, so guard security patches flow
+/// to a fresh install / `guard update` without a CLI release — but never a
+/// breaking 3.0.0, which would need a deliberate bump of the floor here.
+pub const GUARD_NPM_SPEC: &str = "@vaibot/guard@^2.0.0";
 
 /// Run a single best-effort shell step; true on success.
 pub fn run_step(cmd: &str) -> bool {
@@ -23,9 +28,9 @@ pub fn guard_skill_exists() -> bool {
     which("vaibot-guard").is_some() || which("vaibot-guard-service").is_some()
 }
 
-/// Install the guard from npm (`npm install -g @vaibot/guard`, best-effort).
+/// Install the guard from npm (best-effort). Pinned via [`GUARD_NPM_SPEC`].
 pub fn install_guard_skill() -> bool {
-    run_capture("npm install -g @vaibot/guard")
+    run_capture(&format!("npm install -g {GUARD_NPM_SPEC}"))
         .map(|r| r.ok)
         .unwrap_or(false)
 }
@@ -93,21 +98,24 @@ pub fn render_guard_env(existing: &str, vars: &[(&str, String)]) -> String {
 
 /// Write/refresh the guard EnvironmentFile (0600) under ~/.config/vaibot-guard/.
 ///
-/// Pins, in the CLI-managed block, everything the customer's guard needs:
-///   - `VAIBOT_API_KEY`       — provenance anchoring + account
-///   - `VAIBOT_POLICY_URL`    — `{base}/v2/policy` (the signed-bundle feed; wired now so the guard adopts signed policy the moment VAIBot's public key is provisioned and pinned for the account)
-///   - `VAIBOT_GUARD_LOG_DIR` — central per-host audit-log dir, so every guard (daemon or plugin-spawned, via the env-file loader) writes ONE coherent Merkle chain there instead of a `.vaibot-guard/` per project.
+/// v3 (credentials split): the guard now derives `VAIBOT_API_KEY` + the V2
+/// governance / V1 provenance bases + the policy feed (`{governance}/v2/policy`)
+/// straight from the resolved env's slot in `~/.vaibot/credentials.json`, so the
+/// CLI no longer pins `VAIBOT_API_KEY` or `VAIBOT_POLICY_URL` here — pinning them
+/// is exactly what let a stale staging URL pair with a prod key. The only value
+/// left in the CLI-managed block is:
+///   - `VAIBOT_GUARD_LOG_DIR` — central per-host audit-log dir, so every guard
+///     (daemon or plugin-spawned, via the env-file loader) writes ONE coherent
+///     Merkle chain there instead of a `.vaibot-guard/` per project. This is an
+///     install-location concern, not creds-derived, so it stays pinned.
 ///
-/// NOTE: the CLI deliberately does NOT pin a `VAIBOT_POLICY_PUBKEY`. The customer
-/// never holds a policy signing key — VAIBot signs bundles server-side. Until the
-/// well-known VAIBot public key is provisioned + pinned (a server-side step), the
-/// guard runs on its built-in floor (`!POLICY_PUBKEY` ⇒ it skips the remote fetch),
-/// which is the correct, safe default.
-pub fn write_guard_env_file(
-    _env: VaibotEnv,
-    api_base: &str,
-    api_key: &str,
-) -> Result<PathBuf, CliError> {
+/// Re-running init also *removes* any previously-pinned `VAIBOT_API_KEY` /
+/// `VAIBOT_POLICY_URL` (render_guard_env rewrites the whole managed block).
+///
+/// NOTE: the CLI still deliberately does NOT pin a `VAIBOT_POLICY_PUBKEY` — the
+/// customer never holds a policy signing key; VAIBot signs bundles server-side and
+/// the guard pins the well-known per-env public key itself (see pinned-keys.mjs).
+pub fn write_guard_env_file() -> Result<PathBuf, CliError> {
     let path = guard_env_path();
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
 
@@ -116,12 +124,8 @@ pub fn write_guard_env_file(
     let log_dir = guard_log_dir();
     let _ = std::fs::create_dir_all(&log_dir);
 
-    let policy_url = format!("{}/v2/policy", api_base.trim_end_matches('/'));
-    let vars: Vec<(&str, String)> = vec![
-        ("VAIBOT_API_KEY", api_key.to_string()),
-        ("VAIBOT_POLICY_URL", policy_url),
-        ("VAIBOT_GUARD_LOG_DIR", log_dir.to_string_lossy().to_string()),
-    ];
+    let vars: Vec<(&str, String)> =
+        vec![("VAIBOT_GUARD_LOG_DIR", log_dir.to_string_lossy().to_string())];
 
     let contents = render_guard_env(&existing, &vars);
     write_atomic_0600(&path, &contents)?;
@@ -213,6 +217,29 @@ mod tests {
         assert_eq!(second.matches(MANAGED_BEGIN).count(), 1);
         assert!(second.contains("ROTATED="));
         assert!(!second.contains("MCowBQYDK2VwAyEAabc="));
+    }
+
+    #[test]
+    fn v3_re_pin_drops_api_key_and_policy_url_from_the_managed_block() {
+        // A guard env file pinned by a pre-v3 CLI (API_KEY + POLICY_URL + LOG_DIR).
+        let legacy = render_guard_env(
+            "",
+            &[
+                ("VAIBOT_API_KEY", "vbk_live_123".to_string()),
+                ("VAIBOT_POLICY_URL", "https://api.example/v2/policy".to_string()),
+                ("VAIBOT_GUARD_LOG_DIR", "/home/u/.local/share/vaibot/guard".to_string()),
+            ],
+        );
+        // v3 write_guard_env_file pins ONLY the log dir; the guard derives the rest.
+        let out = render_guard_env(
+            &legacy,
+            &[("VAIBOT_GUARD_LOG_DIR", "/home/u/.local/share/vaibot/guard".to_string())],
+        );
+        assert!(out.contains("VAIBOT_GUARD_LOG_DIR=/home/u/.local/share/vaibot/guard\n"));
+        // the stale creds-derived pins are gone — no more staging-URL-with-prod-key trap.
+        assert!(!out.contains("VAIBOT_API_KEY="));
+        assert!(!out.contains("VAIBOT_POLICY_URL="));
+        assert_eq!(out.matches(MANAGED_BEGIN).count(), 1);
     }
 
     #[test]

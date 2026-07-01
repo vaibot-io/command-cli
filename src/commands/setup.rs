@@ -86,15 +86,16 @@ pub async fn init(
     link_email(env, api_url.as_deref(), yes).await;
 
     // 4. First-class guard install (host-agnostic): the guard is the core local
-    //    runtime, so `init` always installs it. It pins VAIBOT_POLICY_URL so the
-    //    feed is wired, and runs on its built-in floor until VAIBot's signed-policy
-    //    public key is provisioned and pinned (a later, server-side step — NOT a
-    //    customer concern; the customer never holds a signing key).
+    //    runtime, so `init` always installs it. The guard derives its key + the
+    //    governance/provenance bases + the signed-policy feed from the creds store
+    //    itself (v3), and runs on its built-in floor until VAIBot's signed-policy
+    //    public key is provisioned (a later, server-side step — NOT a customer
+    //    concern; the customer never holds a signing key). We still gate the
+    //    install on a resolvable key so we can warn early when login is needed.
     //    Agents are wired separately via `vaibot plugin add <claudecode|codex|openclaw>`.
-    let api_base = api_base_for_env(env, api_url.as_deref());
     let store = load_store(&credentials_path(&ProcessEnv));
     match api_key_for_env(&store, env) {
-        Some(key) => install_guard(env, &api_base, &key)?,
+        Some(_) => install_guard()?,
         None => println!(
             "\n[warn] No API key resolved — skipping guard install. Run `vaibot login`, then `vaibot guard install`."
         ),
@@ -357,19 +358,21 @@ fn wire_detected_hosts(yes: bool) {
 /// (npm; install if missing), write the guard env file, enable the systemd user
 /// service. Best-effort — narrates each step. Shared by `init`, `guard install`,
 /// and (ensure-if-missing) the host plugin installer.
-pub fn install_guard(env: VaibotEnv, api_base: &str, api_key: &str) -> Result<(), CliError> {
+pub fn install_guard() -> Result<(), CliError> {
     println!("[step] Installing guard...");
     if installer::guard_skill_exists() {
         println!("[ok]   Guard already installed — skipping");
     } else if installer::install_guard_skill() {
-        println!("[ok]   Guard installed (npm i -g @vaibot/guard)");
+        println!("[ok]   Guard installed (npm i -g {})", installer::GUARD_NPM_SPEC);
     } else {
         println!("[warn] Could not install the guard automatically.");
-        println!("       Install manually: npm install -g @vaibot/guard");
+        println!("       Install manually: npm install -g {}", installer::GUARD_NPM_SPEC);
     }
 
     println!("[step] Writing guard environment file...");
-    let path = installer::write_guard_env_file(env, api_base, api_key)?;
+    // v3: the guard derives api_key + governance/provenance bases + policy feed
+    // from the creds store; the env file only pins the per-host audit-log dir.
+    let path = installer::write_guard_env_file()?;
     println!("[ok]   Guard env written to {}", path.display());
     println!("[ok]   The guard enforces your governance floor locally; it adopts VAIBot's signed");
     println!("       policy automatically once that feed is live for your account.");

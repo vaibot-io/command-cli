@@ -7,7 +7,7 @@
 use clap::Subcommand;
 
 use crate::commands::setup::install_guard;
-use crate::config::creds::{api_base_for_env, load_store, resolve_credentials};
+use crate::config::creds::{load_store, resolve_credentials};
 use crate::config::{credentials_path, ProcessEnv};
 use crate::error::{CliError, ExitCode};
 use crate::services::child::{run_foreground, SpawnOptions};
@@ -69,12 +69,13 @@ pub async fn dispatch(cmd: GuardCmd) -> Result<(), CliError> {
 fn install() -> Result<(), CliError> {
     let store = load_store(&credentials_path(&ProcessEnv));
     let resolved = resolve_credentials(&ProcessEnv, &store);
-    let Some(key) = resolved.api_key.clone() else {
+    // The guard self-derives key + governance/provenance bases from the creds
+    // store (v3); we only gate on a resolvable key to fail fast with a clear message.
+    if resolved.api_key.is_none() {
         println!("[fail] No API key found. Run `vaibot init` or `vaibot login` first.");
         return Err(CliError::Runtime("no api key".into()));
-    };
-    let base = api_base_for_env(resolved.env, Some(&resolved.api_base_url));
-    install_guard(resolved.env, &base, &key)
+    }
+    install_guard()
 }
 
 /// SHELL-OUT: locate the separate guard binary and exec it; never embed it.
@@ -84,7 +85,7 @@ async fn serve(passthrough: Vec<String>) -> Result<(), CliError> {
         eprintln!("The guard is a SEPARATE service — the CLI orchestrates it, it does not host it.");
         eprintln!("It runs as a per-host singleton on port {GUARD_SINGLETON_PORT}.\n");
         eprintln!("Install it (recommended):");
-        eprintln!("  npm install -g @vaibot/guard   # provides vaibot-guard + vaibot-guard-service");
+        eprintln!("  npm install -g {}   # provides vaibot-guard + vaibot-guard-service", installer::GUARD_NPM_SPEC);
         eprintln!("  systemctl --user enable --now vaibot-guard   # if the unit is installed\n");
         eprintln!("Or point the CLI at the binary:");
         eprintln!("  export VAIBOT_GUARD_BIN=/path/to/vaibot-guard-service");
