@@ -5,10 +5,17 @@ guard, gateway, plugins, policy, MCP, and provenance across the machine-intellig
 lifecycle. Crate `vaibot`, binary `vaibot`, MIT-licensed. A standalone Cargo project
 (its own `Cargo.lock`, not a workspace member).
 
-```bash
-cargo install vaibot
-vaibot init            # log in, install the guard, wire your agents, set a policy floor
-```
+## Install
+
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/vaibot-io/command-cli/main/install.sh | sh
+  ```
+
+  Or with wget:
+
+  ```sh
+  wget -qO- https://raw.githubusercontent.com/vaibot-io/command-cli/main/install.sh | sh
+  ```
 
 ## What it is (and isn't)
 
