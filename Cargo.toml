@@ -8,8 +8,10 @@ license = "MIT"
 authors = ["Campbell Labs LLC"]
 repository = "https://github.com/vaibot-io/command-cli"
 readme = "README.md"
-keywords = ["llm", "cli", "governance", "provenance", "security"]
-categories = ["command-line-utilities"]
+# crates.io caps keywords at 5 (each ≤20 chars). Aligned with the circuit-breaker
+# plugins' npm keywords; the fuller tag set lives on the repo's GitHub topics.
+keywords = ["ai-governance", "guardrails", "vaibot", "llm", "security"]
+categories = ["command-line-utilities", "development-tools"]
 
 # Standalone: explicitly NOT part of any parent workspace (own Cargo.lock).
 [workspace]
