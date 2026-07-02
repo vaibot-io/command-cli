@@ -8,4 +8,4 @@
   fi
 
   cargo install vaibot
-  vaibot login
+  vaibot 
