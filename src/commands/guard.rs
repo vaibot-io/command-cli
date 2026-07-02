@@ -1,14 +1,21 @@
 //! `guard` group.
 //!   serve   [SHELL-OUT] — execs the separate guard binary.
+//!   start   [REAL] systemd-or-detached daemon start.
 //!   status  [REAL] systemd + /health.   restart/stop [REAL] systemctl.
 //!   logs    [REAL] journalctl.           policy [REAL] GET /v1/policy.
 //!   verify/provision-offline [STUB].
 
+use std::fs::OpenOptions;
+use std::process::Stdio;
+use std::time::Duration;
+
 use clap::Subcommand;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 use crate::commands::setup::install_guard;
 use crate::config::creds::{load_store, resolve_credentials};
-use crate::config::{credentials_path, ProcessEnv};
+use crate::config::{credentials_path, guard_log_dir, ProcessEnv};
 use crate::error::{CliError, ExitCode};
 use crate::services::child::{run_foreground, SpawnOptions};
 use crate::services::guard_bin::{locate_guard_bin, GuardSource, GUARD_SINGLETON_PORT};
@@ -26,6 +33,8 @@ pub enum GuardCmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         passthrough: Vec<String>,
     },
+    /// Start the guard daemon in the background.
+    Start,
     /// Check guard service health.
     Status,
     /// Restart the guard service (systemctl --user restart).
@@ -54,6 +63,7 @@ pub async fn dispatch(cmd: GuardCmd) -> Result<(), CliError> {
     match cmd {
         GuardCmd::Install => install(),
         GuardCmd::Serve { passthrough } => serve(passthrough).await,
+        GuardCmd::Start => start().await,
         GuardCmd::Status => guard_http::run_guard_status().await,
         GuardCmd::Restart => restart(),
         GuardCmd::Stop => stop(),
@@ -105,6 +115,123 @@ async fn serve(passthrough: Vec<String>) -> Result<(), CliError> {
     args.extend(passthrough);
     let code = run_foreground(&loc.bin, SpawnOptions { args }).await?;
     std::process::exit(code);
+}
+
+/// `vaibot guard start` — start the daemon and return.
+///
+/// On systemd hosts, prefer the managed user service. On macOS and non-systemd
+/// Linux, fall back to a detached child process with logs under ~/.vaibot/guard/log.
+async fn start() -> Result<(), CliError> {
+    println!("\nStarting the VAIBot guard...\n");
+
+    if guard_health_ok().await {
+        println!("  [ok]   Guard is already healthy at http://127.0.0.1:{GUARD_SINGLETON_PORT}");
+        return Ok(());
+    }
+
+    if systemd_available() {
+        if installer::run_step("systemctl --user start vaibot-guard") {
+            if wait_for_guard_health().await {
+                println!("  [ok]   vaibot-guard.service started");
+                return Ok(());
+            }
+            println!("  [warn] systemd reported start success, but the guard health check did not pass yet.");
+            println!("         Check logs with `vaibot guard logs`.");
+            return Ok(());
+        }
+        println!("  [warn] Couldn't start via systemd; falling back to a detached daemon.");
+    } else {
+        println!("  [info] systemd not available — starting a detached daemon.");
+    }
+
+    start_detached().await
+}
+
+async fn start_detached() -> Result<(), CliError> {
+    let Some(loc) = locate_guard_bin() else {
+        return Err(CliError::Runtime(format!(
+            "no guard service binary found; install it with `npm install -g {}`",
+            installer::GUARD_NPM_SPEC
+        )));
+    };
+
+    let log_dir = guard_log_dir();
+    std::fs::create_dir_all(&log_dir).map_err(|e| {
+        CliError::Runtime(format!("create guard log dir {}: {e}", log_dir.display()))
+    })?;
+    let log_path = log_dir.join("service.log");
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|e| CliError::Runtime(format!("open guard log {}: {e}", log_path.display())))?;
+    let stderr = stdout
+        .try_clone()
+        .map_err(|e| CliError::Runtime(format!("clone guard log handle: {e}")))?;
+
+    let mut command = std::process::Command::new(&loc.bin);
+    command
+        .args(&loc.args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            nix::unistd::setsid()
+                .map(|_| ())
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        });
+    }
+
+    let mut child = command
+        .spawn()
+        .map_err(|e| CliError::Runtime(format!("failed to start {}: {e}", loc.bin)))?;
+
+    if wait_for_guard_health().await {
+        println!(
+            "  [ok]   Guard started in the background (pid {})",
+            child.id()
+        );
+        println!("  [info] Logs: {}", log_path.display());
+        return Ok(());
+    }
+
+    if let Ok(Some(status)) = child.try_wait() {
+        return Err(CliError::Runtime(format!(
+            "guard exited before becoming healthy ({status}); see {}",
+            log_path.display()
+        )));
+    }
+
+    println!(
+        "  [warn] Guard process started (pid {}), but health check did not pass yet.",
+        child.id()
+    );
+    println!("         Check logs: {}", log_path.display());
+    Ok(())
+}
+
+async fn wait_for_guard_health() -> bool {
+    for _ in 0..20 {
+        if guard_health_ok().await {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    false
+}
+
+async fn guard_health_ok() -> bool {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_millis(500))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let url = format!("http://127.0.0.1:{GUARD_SINGLETON_PORT}/health");
+    matches!(client.get(url).send().await, Ok(resp) if resp.status().is_success())
 }
 
 /// `vaibot guard restart` — restart the systemd-managed guard.
