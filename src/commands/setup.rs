@@ -378,10 +378,14 @@ pub fn install_guard() -> Result<(), CliError> {
     println!("       policy automatically once that feed is live for your account.");
 
     println!("[step] Installing systemd user service...");
-    if systemd_available() && installer::install_systemd_service() {
-        println!("[ok]   vaibot-guard.service enabled and started");
+    if systemd_available() {
+        if installer::install_systemd_service() {
+            println!("[ok]   vaibot-guard.service enabled and started");
+        } else {
+            println!("[warn] systemd unit not enabled — start the guard manually if needed.");
+        }
     } else {
-        println!("[warn] systemd unit not enabled — start the guard manually if needed.");
+        println!("[info] systemd not available on this host — start the guard manually if needed.");
     }
     Ok(())
 }
