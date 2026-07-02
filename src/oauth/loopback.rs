@@ -49,7 +49,7 @@ pub async fn login(
     let expected_state = pair.state.secret().clone();
 
     // Bind FIRST so we know the port before constructing the redirect URI.
-    let server = tiny_http::Server::http("127.0.0.1:0")
+    let server = tiny_http::Server::http("127.0.0.1:56649")
         .map_err(|e| LoopbackError::Cli(oauth_err("loopback bind", e)))?;
     let port = match server.server_addr() {
         tiny_http::ListenAddr::IP(addr) => addr.port(),
