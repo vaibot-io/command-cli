@@ -9,3 +9,5 @@
 
   cargo install vaibot
   vaibot status
+
+  export PATH="$HOME/.cargo/bin:$PATH"
