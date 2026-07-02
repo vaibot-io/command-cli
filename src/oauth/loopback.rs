@@ -56,7 +56,7 @@ pub async fn login(
         #[allow(unreachable_patterns)]
         _ => return Err(LoopbackError::Cli(CliError::Runtime("loopback: non-IP listen addr".into()))),
     };
-    let redirect = format!("http://127.0.0.1:{port}/callback");
+    let redirect = format!("http://127.0.0.1:56649/callback");
 
     let client = build_client(
         ClientId::new(CLI_CLIENT_ID.to_string()),
