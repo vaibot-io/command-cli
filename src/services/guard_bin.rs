@@ -3,8 +3,8 @@
 //!
 //! Resolution order (all provided by `npm install -g @vaibot/guard`):
 //!   1. $VAIBOT_GUARD_BIN              — explicit override (must exist).
-//!   2. `vaibot-guard` on PATH          — the operator bin.
-//!   3. `vaibot-guard-service` on PATH  — the daemon bin.
+//!   2. `vaibot-guard-service` on PATH  — the daemon bin.
+//!   3. `vaibot-guard` on PATH          — fallback/operator bin.
 //!
 //! Returns `None` when nothing is found — `guard serve` then prints how to
 //! install it and exits without ever starting an in-CLI daemon.
@@ -42,18 +42,18 @@ pub fn locate_guard_bin() -> Option<GuardBinLocation> {
             });
         }
     }
-    if which("vaibot-guard").is_some() {
-        return Some(GuardBinLocation {
-            bin: "vaibot-guard".into(),
-            args: vec![],
-            source: GuardSource::Path,
-        });
-    }
     if which("vaibot-guard-service").is_some() {
         return Some(GuardBinLocation {
             bin: "vaibot-guard-service".into(),
             args: vec![],
             source: GuardSource::Service,
+        });
+    }
+    if which("vaibot-guard").is_some() {
+        return Some(GuardBinLocation {
+            bin: "vaibot-guard".into(),
+            args: vec![],
+            source: GuardSource::Path,
         });
     }
     None
