@@ -377,11 +377,12 @@ pub fn install_guard() -> Result<(), CliError> {
     println!("[ok]   The guard enforces your governance floor locally; it adopts VAIBot's signed");
     println!("       policy automatically once that feed is live for your account.");
 
-    println!("[step] Installing systemd user service...");
-    if systemd_available() && installer::install_systemd_service() {
-        println!("[ok]   vaibot-guard.service enabled and started");
+    println!("[step] Installing the guard as a service (platform-aware: systemd / launchd / self-spawn)...");
+    if installer::install_guard_service_platform() {
+        println!("[ok]   Guard service installed + healthy.");
     } else {
-        println!("[warn] systemd unit not enabled — start the guard manually if needed.");
+        println!("[warn] Guard service not confirmed healthy — it self-spawns on the first tool call.");
+        println!("       See ~/.vaibot/guard/launch.log or run `vaibot guard status`.");
     }
     Ok(())
 }
