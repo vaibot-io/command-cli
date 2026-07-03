@@ -53,9 +53,17 @@ pub async fn init(
     let store = load_store(&credentials_path(&ProcessEnv));
     println!("▸ Environment: {env}");
 
-    // 1. Interactive login, unless skipped or a key for THIS env already exists.
+    // 1. Interactive login, unless skipped, a key for THIS env exists, OR a valid
+    //    session already exists. `vaibot login` writes an OAuth *session*, not an
+    //    api_key — the old key-only check missed it and re-ran OAuth (which then hit
+    //    an invalid-redirect error on the re-auth). Recognize the session and skip.
     let have_key = api_key.is_some() || api_key_for_env(&store, env).is_some();
-    if !skip_login && api_key.is_none() && !have_key {
+    let existing = get_broker()
+        .whoami(Some(crate::broker::EnvOpt { env: Some(env) }))
+        .await
+        .ok()
+        .flatten();
+    if !skip_login && api_key.is_none() && !have_key && existing.is_none() {
         println!("▸ Logging in...");
         let opts = LoginOptions {
             mode: mode_for(false),
@@ -66,6 +74,9 @@ pub async fn init(
         if let Err(e) = get_broker().login(opts, &stdout_print).await {
             println!("  Login skipped/failed ({e}); falling back to a machine account.");
         }
+    } else if let Some(who) = &existing {
+        let id = who.email.clone().unwrap_or_else(|| who.subject.clone());
+        println!("▸ Using existing login: {id}");
     }
 
     // 2. Ensure an API key exists. A provided --api-key wins; otherwise, if
