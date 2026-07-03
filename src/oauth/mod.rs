@@ -22,8 +22,12 @@ use crate::error::CliError;
 
 pub const DEFAULT_OAUTH_ISSUER: &str = "https://oauth.vaibot.io";
 
-/// Public, non-secret client id for the installed CLI app (PKCE + device).
-pub const CLI_CLIENT_ID: &str = "vaibot-cli";
+/// Public, non-secret client id for the installed CLI app (loopback PKCE).
+/// The `vaibot_` (underscore) prefix lets the OAuth server auto-register it on the
+/// first /authorize (see `canAutoRegister`); it is also seeded explicitly in the
+/// oauth `sql/002_seed_vaibot_cli_client.sql` migration, so it works even where
+/// dynamic registration is disabled.
+pub const CLI_CLIENT_ID: &str = "vaibot_cli";
 
 /// Scopes requested by the interactive user login. `govern` is the VAIBot
 /// custom scope gating Governance-plane actions; openid/profile/email standard.
