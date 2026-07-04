@@ -161,13 +161,26 @@ impl CredentialBroker for FileCredentialBroker {
     async fn whoami(&self, opts: Option<EnvOpt>) -> Result<Option<WhoAmI>, CliError> {
         let env = opts.and_then(|o| o.env).unwrap_or_else(|| self.env());
         if let Some(session) = self.store.load(env)? {
-            return Ok(Some(WhoAmI {
-                subject: session.subject.clone().unwrap_or_else(|| "(unknown)".into()),
-                email: session.email.clone(),
-                scope: session.scope.clone(),
-                expires_in_sec: ((session.expires_at - now_ms()) / 1000.0).round(),
-                source: AuthSource::OAuth,
-            }));
+            // An EXPIRED session must NOT count as logged-in — otherwise `vaibot init`
+            // skips re-auth and can fork the user onto a throwaway machine account (or
+            // serve a dead token). At/past expiry, try a silent refresh (the common
+            // access-lapsed/refresh-alive case self-heals to the real account); report
+            // OAuth identity only when the session is, or becomes, valid. If refresh
+            // fails, fall through to the api_key / logged-out path so callers re-auth.
+            let live = if session.expires_at - now_ms() <= REFRESH_SKEW_MS {
+                self.refresh(&session).await
+            } else {
+                Some(session)
+            };
+            if let Some(session) = live {
+                return Ok(Some(WhoAmI {
+                    subject: session.subject.clone().unwrap_or_else(|| "(unknown)".into()),
+                    email: session.email.clone(),
+                    scope: session.scope.clone(),
+                    expires_in_sec: ((session.expires_at - now_ms()) / 1000.0).round(),
+                    source: AuthSource::OAuth,
+                }));
+            }
         }
         let store = creds_store();
         let resolved = resolve_credentials(&ProcessEnv, &store);
@@ -229,6 +242,39 @@ mod tests {
         assert_eq!(who.email.as_deref(), Some("a@b.c"));
         assert_eq!(who.source, AuthSource::OAuth);
         std::env::remove_var("VAIBOT_ENV");
+    }
+
+    #[tokio::test]
+    async fn whoami_treats_expired_unrefreshable_session_as_logged_out() {
+        // Phase-3 #3: an expired session with no refresh token must NOT read as an OAuth
+        // login, so `vaibot init` re-authenticates instead of skipping onto a machine
+        // account. Explicit env + injected store → no process-env mutation (race-proof).
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileTokenStore::at(dir.path().join("oauth.json"));
+        store
+            .save(
+                &OAuthSession {
+                    access_token: "dead".into(),
+                    refresh_token: None, // expired + no refresh → un-refreshable
+                    expires_at: now_ms() - 10_000.0,
+                    token_type: "Bearer".into(),
+                    scope: None,
+                    subject: Some("user-9".into()),
+                    email: Some("a@b.c".into()),
+                    issuer: Some("https://oauth.vaibot.io".into()),
+                },
+                VaibotEnv::Production,
+            )
+            .unwrap();
+        let broker = FileCredentialBroker::with_store(Box::new(store));
+        let who = broker
+            .whoami(Some(EnvOpt { env: Some(VaibotEnv::Production) }))
+            .await
+            .unwrap();
+        assert!(
+            who.map(|w| w.source) != Some(AuthSource::OAuth),
+            "expired session with no refresh must not read as an OAuth login",
+        );
     }
 
     #[tokio::test]
