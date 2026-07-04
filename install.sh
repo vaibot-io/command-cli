@@ -44,6 +44,6 @@ say "Installing the vaibot CLI..."
 cargo install vaibot
 
 # Hand off to first-run setup: log in, install the guard, wire agents, set a
-# policy floor. exec so init owns the terminal and its exit code is ours.
+# policy floor.
 say "Running vaibot init..."
-exec vaibot init
+vaibot init
