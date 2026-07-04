@@ -53,9 +53,17 @@ pub async fn init(
     let store = load_store(&credentials_path(&ProcessEnv));
     println!("▸ Environment: {env}");
 
-    // 1. Interactive login, unless skipped or a key for THIS env already exists.
+    // 1. Interactive login, unless skipped, a key for THIS env exists, OR a valid
+    //    session already exists. `vaibot login` writes an OAuth *session*, not an
+    //    api_key — the old key-only check missed it and re-ran OAuth (which then hit
+    //    an invalid-redirect error on the re-auth). Recognize the session and skip.
     let have_key = api_key.is_some() || api_key_for_env(&store, env).is_some();
-    if !skip_login && api_key.is_none() && !have_key {
+    let existing = get_broker()
+        .whoami(Some(crate::broker::EnvOpt { env: Some(env) }))
+        .await
+        .ok()
+        .flatten();
+    if !skip_login && api_key.is_none() && !have_key && existing.is_none() {
         println!("▸ Logging in...");
         let opts = LoginOptions {
             mode: mode_for(false),
@@ -66,6 +74,9 @@ pub async fn init(
         if let Err(e) = get_broker().login(opts, &stdout_print).await {
             println!("  Login skipped/failed ({e}); falling back to a machine account.");
         }
+    } else if let Some(who) = &existing {
+        let id = who.email.clone().unwrap_or_else(|| who.subject.clone());
+        println!("▸ Using existing login: {id}");
     }
 
     // 2. Ensure an API key exists. A provided --api-key wins; otherwise, if
@@ -377,11 +388,12 @@ pub fn install_guard() -> Result<(), CliError> {
     println!("[ok]   The guard enforces your governance floor locally; it adopts VAIBot's signed");
     println!("       policy automatically once that feed is live for your account.");
 
-    println!("[step] Installing systemd user service...");
-    if systemd_available() && installer::install_systemd_service() {
-        println!("[ok]   vaibot-guard.service enabled and started");
+    println!("[step] Installing the guard as a service (platform-aware: systemd / launchd / self-spawn)...");
+    if installer::install_guard_service_platform() {
+        println!("[ok]   Guard service installed + healthy.");
     } else {
-        println!("[warn] systemd unit not enabled — start the guard manually if needed.");
+        println!("[warn] Guard service not confirmed healthy — it self-spawns on the first tool call.");
+        println!("       See ~/.vaibot/guard/launch.log or run `vaibot guard status`.");
     }
     Ok(())
 }

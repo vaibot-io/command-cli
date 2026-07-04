@@ -19,7 +19,7 @@ use url::Url;
 
 use super::discovery::{build_client, discover};
 use super::pkce;
-use super::tokens::{claims_from_id_token, TokenSet};
+use super::tokens::{identity_from_tokens, TokenSet};
 use super::{oauth_err, BrowserUnavailable, CLI_CLIENT_ID};
 use crate::error::CliError;
 
@@ -110,10 +110,13 @@ pub async fn login(
 
 /// Build the normalized `TokenSet` from an oauth2 token response.
 pub(crate) fn token_set_from(token: super::discovery::CliTokenResponse) -> TokenSet {
+    let access_token = token.access_token().secret().clone();
     let id_token = token.extra_fields().id_token.clone();
-    let (subject, email) = claims_from_id_token(id_token.as_deref());
+    // The OAuth server returns no id_token, so fall back to the access token (a Supabase
+    // JWT carrying sub + email) — otherwise the CLI never learns the user's identity.
+    let (subject, email) = identity_from_tokens(&access_token, id_token.as_deref());
     TokenSet {
-        access_token: token.access_token().secret().clone(),
+        access_token,
         refresh_token: token.refresh_token().map(|r| r.secret().clone()),
         expires_in: token.expires_in().map(|d| d.as_secs()),
         scope: token

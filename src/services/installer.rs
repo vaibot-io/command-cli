@@ -139,6 +139,15 @@ pub fn install_systemd_service() -> bool {
         .unwrap_or(false)
 }
 
+/// Platform-aware service install: shell out to the guard's own `vaibot-guard install`,
+/// which walks the root-preferred ladder (systemd / launchd / self-spawn), writes the
+/// unit, starts it, and health-verifies. Returns true only when that succeeds (exit 0),
+/// so a false means "not confirmed healthy — will self-spawn." Keeps the CLI a thin
+/// orchestrator: one source of truth for the ladder lives in node, not duplicated here.
+pub fn install_guard_service_platform() -> bool {
+    run_step("vaibot-guard install")
+}
+
 /// Verify the plugin appears loaded (best-effort).
 pub fn verify_plugin() -> bool {
     run_capture("openclaw plugins list")
