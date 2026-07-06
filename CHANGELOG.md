@@ -2,6 +2,19 @@
 
 All notable changes to the `vaibot` CLI (`command-cli`).
 
+## [0.6.0] — unreleased — Cursor plugin support
+
+### Added
+- **`cursor` is now a supported host for `vaibot plugin add/remove/update`.** Cursor
+  has no plugin-install CLI (unlike claude/codex/openclaw), so — now that
+  [`vaibot-io/cursor-circuitbreaker-plugin`](https://github.com/vaibot-io/cursor-circuitbreaker-plugin)
+  is published — the CLI installs it by **cloning the repo into
+  `~/.cursor/plugins/local/vaibot-cursor`**, where Cursor loads local plugins. `add`
+  clones (or `git pull --ff-only` if already present), `update` pulls, and `remove`
+  deletes the dir — all idempotent; requires `git`. Restart Cursor (and enable
+  `vaibot-cursor` in Customize if prompted) to activate. The Cursor MCP server stays
+  file-based (`~/.cursor/mcp.json`), so `vaibot mcp connect` skips Cursor.
+
 ## [0.5.0] — 2026-07-05 — account key recovery
 
 ### Added
