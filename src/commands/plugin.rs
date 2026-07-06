@@ -19,7 +19,7 @@ use super::setup;
 pub enum PluginCmd {
     /// Install a host's circuit-breaker plugin (and ensure the shared guard).
     Add {
-        /// Target host: claudecode | codex | openclaw.
+        /// Target host: claudecode | codex | openclaw | cursor.
         #[arg(default_value = "openclaw")]
         host: String,
         /// Skip ensuring the shared guard.
@@ -37,7 +37,7 @@ pub enum PluginCmd {
     },
     /// Uninstall a VAIBot host integration (the circuit-breaker plugin).
     Remove {
-        /// Target host: claudecode | codex | openclaw.
+        /// Target host: claudecode | codex | openclaw | cursor.
         #[arg(default_value = "openclaw")]
         host: String,
         /// Also uninstall the SHARED guard (npm + systemd). Off by default —
@@ -47,7 +47,7 @@ pub enum PluginCmd {
     },
     /// Upgrade a VAIBot host integration (guard + circuit-breaker plugin).
     Update {
-        /// Target host: claudecode | codex | openclaw.
+        /// Target host: claudecode | codex | openclaw | cursor.
         #[arg(default_value = "openclaw")]
         host: String,
         /// Skip updating the shared guard.
@@ -89,6 +89,9 @@ fn add(host: String, skip_guard: bool, skip_plugin: bool) -> Result<(), CliError
 /// Assumes the caller already ensured the shared guard. Reused by `plugin add`
 /// and `init`'s auto-detect.
 pub fn install_host_plugin(h: Host) -> Result<(), CliError> {
+    if matches!(h, Host::Cursor) {
+        return install_cursor();
+    }
     require_cli(h)?;
     for &(label, cmd) in h.install_steps() {
         run_narrated(label, cmd);
@@ -100,8 +103,75 @@ pub fn install_host_plugin(h: Host) -> Result<(), CliError> {
     Ok(())
 }
 
+// ── Cursor: local-clone install ───────────────────────────────────────────────
+// Cursor has no plugin-install CLI, so we clone the published repo into
+// ~/.cursor/plugins/local/vaibot-cursor (Cursor loads local plugins from there).
+
+fn install_cursor() -> Result<(), CliError> {
+    require_git()?;
+    let dir = installer::cursor_local_dir();
+    println!("[step] Installing the Cursor plugin → {}", dir.display());
+    if installer::install_cursor_plugin() {
+        println!("[ok]   Installed.");
+        println!(
+            "\nFinish in Cursor:\n  \
+             1. Restart Cursor (or run \"Developer: Reload Window\").\n  \
+             2. If it isn't active, enable 'vaibot-cursor' in Customize.\n\n\
+             This is a local install — `vaibot plugin update cursor` pulls new versions.\n\
+             Prefer auto-updates? Import the repo as a marketplace in Cursor's Dashboard instead."
+        );
+    } else {
+        println!("[fail] Could not install the Cursor plugin. Ensure `git` is installed and github.com is reachable, then re-run.");
+        return Err(CliError::Runtime("cursor plugin install failed".into()));
+    }
+    Ok(())
+}
+
+fn update_cursor(skip_guard: bool) -> Result<(), CliError> {
+    require_git()?;
+    if !skip_guard {
+        update_guard();
+    }
+    println!("[step] Updating the Cursor plugin (git pull)...");
+    if installer::update_cursor_plugin() {
+        println!("[ok]   Updated. Restart Cursor to load the new version.");
+    } else {
+        println!("[warn] Could not update — run `vaibot plugin add cursor` to reinstall.");
+    }
+    println!("\n[ok]   Cursor plugin update complete.");
+    Ok(())
+}
+
+fn remove_cursor(with_guard: bool) -> Result<(), CliError> {
+    let dir = installer::cursor_local_dir();
+    println!("[step] Removing the Cursor plugin ({})...", dir.display());
+    if installer::remove_cursor_plugin() {
+        println!("[ok]   Removed. Restart Cursor to unload it.");
+    } else {
+        println!("[warn] Could not remove {} — delete it manually.", dir.display());
+    }
+    if with_guard {
+        remove_guard();
+    } else {
+        println!("\nLeft the shared guard in place — other hosts may use it. Pass --with-guard to remove it too.");
+    }
+    println!("\n[ok]   Cursor plugin remove complete.");
+    Ok(())
+}
+
+fn require_git() -> Result<(), CliError> {
+    if which("git").is_none() {
+        println!("[fail] `git` not found on PATH — it's required to install the Cursor plugin. Install git, then re-run.");
+        return Err(CliError::Runtime("git not found".into()));
+    }
+    Ok(())
+}
+
 fn remove(host: String, with_guard: bool) -> Result<(), CliError> {
     let h = parse_host(&host)?;
+    if matches!(h, Host::Cursor) {
+        return remove_cursor(with_guard);
+    }
     require_cli(h)?;
 
     let cmd = h.remove_cmd();
@@ -125,6 +195,9 @@ fn remove(host: String, with_guard: bool) -> Result<(), CliError> {
 
 fn update(host: String, skip_guard: bool) -> Result<(), CliError> {
     let h = parse_host(&host)?;
+    if matches!(h, Host::Cursor) {
+        return update_cursor(skip_guard);
+    }
     require_cli(h)?;
 
     if !skip_guard {
@@ -143,7 +216,7 @@ fn update(host: String, skip_guard: bool) -> Result<(), CliError> {
 
 fn parse_host(host: &str) -> Result<Host, CliError> {
     Host::parse(host).ok_or_else(|| {
-        println!("[fail] Unknown host \"{host}\". Use one of: claudecode | codex | openclaw.");
+        println!("[fail] Unknown host \"{host}\". Use one of: claudecode | codex | openclaw | cursor.");
         CliError::Runtime(format!("unknown host: {host}"))
     })
 }

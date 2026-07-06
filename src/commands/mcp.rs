@@ -57,12 +57,23 @@ fn targets(host: Option<String>) -> Result<Vec<Host>, CliError> {
         Some(h) => {
             let host = Host::parse(&h).ok_or_else(|| {
                 CliError::Runtime(format!(
-                    "Unknown host \"{h}\". Use one of: claudecode | codex | openclaw."
+                    "Unknown host \"{h}\". Use one of: claudecode | codex | openclaw | cursor."
                 ))
             })?;
+            if host.is_file_based() {
+                println!(
+                    "[info] {} MCP is file-based — add the vaibot server to ~/.cursor/mcp.json manually (no CLI to wire it).",
+                    host.label()
+                );
+                return Ok(vec![]);
+            }
             Ok(vec![host])
         }
-        None => Ok(Host::ALL.into_iter().filter(|h| h.cli_present()).collect()),
+        // File-based hosts (cursor) have no MCP-registration CLI, so skip them here.
+        None => Ok(Host::ALL
+            .into_iter()
+            .filter(|h| h.cli_present() && !h.is_file_based())
+            .collect()),
     }
 }
 
@@ -136,6 +147,8 @@ fn connect_one(h: Host, url: &str, key: &str) -> bool {
             .to_string();
             vec!["mcp".into(), "set".into(), MCP_NAME.into(), json]
         }
+        // File-based (cursor) — never a target here (filtered out in targets()).
+        Host::Cursor => return false,
     };
 
     println!("  {:<12} registering '{MCP_NAME}'…", h.label());
@@ -196,6 +209,7 @@ fn mcp_registered(h: Host) -> bool {
         Host::Claudecode => format!("claude mcp get {MCP_NAME}"),
         Host::Codex => format!("codex mcp get {MCP_NAME}"),
         Host::Openclaw => format!("openclaw mcp show {MCP_NAME}"),
+        Host::Cursor => return false,
     };
     run_capture(&cmd).map(|r| r.ok).unwrap_or(false)
 }
@@ -212,6 +226,7 @@ fn disconnect(host: Option<String>) -> Result<(), CliError> {
             Host::Claudecode => &["mcp", "remove", MCP_NAME],
             Host::Codex => &["mcp", "remove", MCP_NAME],
             Host::Openclaw => &["mcp", "unset", MCP_NAME],
+            Host::Cursor => &[],
         };
         let ok = Command::new(h.cli())
             .args(args)

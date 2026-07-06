@@ -5,7 +5,10 @@
 //! (Host circuit-breaker plugins are handled per-host in `services::host`.) Each
 //! returns a bool (success) and never panics — the handlers narrate the result.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use directories::BaseDirs;
 
 use super::{run_capture, which};
 use crate::config::atomic::write_atomic_0600;
@@ -173,6 +176,83 @@ pub fn disable_systemd_service() -> bool {
 pub fn restart_systemd_service() -> bool {
     run_capture("systemctl --user restart vaibot-guard")
         .map(|r| r.ok)
+        .unwrap_or(false)
+}
+
+// ── Cursor plugin (local install) ─────────────────────────────────────────────
+// Cursor has no plugin-install CLI, so `plugin add cursor` clones the PUBLISHED
+// repo into `~/.cursor/plugins/local/<name>/` — Cursor loads local plugins from
+// there on restart. The repo root IS the plugin (single-plugin layout), so a
+// direct clone lands `.cursor-plugin/plugin.json` + `hooks/` at the plugin root.
+
+/// Published Cursor plugin repo (public → HTTPS clone needs no auth).
+const CURSOR_PLUGIN_REPO: &str = "https://github.com/vaibot-io/cursor-circuitbreaker-plugin.git";
+
+/// `~/.cursor/plugins/local/vaibot-cursor` — where Cursor loads the local plugin.
+pub fn cursor_local_dir() -> PathBuf {
+    BaseDirs::new()
+        .map(|b| b.home_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".cursor")
+        .join("plugins")
+        .join("local")
+        .join("vaibot-cursor")
+}
+
+/// Install the Cursor plugin: clone fresh, or fast-forward if already cloned.
+/// Returns whether it ended up present + current.
+pub fn install_cursor_plugin() -> bool {
+    let dir = cursor_local_dir();
+    if dir.join(".git").is_dir() {
+        return git_ff(&dir); // already a clone → update in place (idempotent add)
+    }
+    if dir.exists() {
+        // a non-git dir is in the way → clear it so the clone can land
+        if std::fs::remove_dir_all(&dir).is_err() {
+            return false;
+        }
+    }
+    if let Some(parent) = dir.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return false;
+        }
+    }
+    // Inherit stdio so git's clone progress is visible.
+    Command::new("git")
+        .args(["clone", CURSOR_PLUGIN_REPO])
+        .arg(&dir)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Fast-forward the local clone; reinstall if the dir isn't a git checkout.
+pub fn update_cursor_plugin() -> bool {
+    let dir = cursor_local_dir();
+    if dir.join(".git").is_dir() {
+        git_ff(&dir)
+    } else {
+        install_cursor_plugin()
+    }
+}
+
+/// Remove the local plugin dir. Idempotent — a missing dir counts as success.
+pub fn remove_cursor_plugin() -> bool {
+    let dir = cursor_local_dir();
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).is_ok()
+    } else {
+        true
+    }
+}
+
+fn git_ff(dir: &Path) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["pull", "--ff-only"])
+        .status()
+        .map(|s| s.success())
         .unwrap_or(false)
 }
 
