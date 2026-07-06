@@ -49,6 +49,17 @@ pub struct Quota {
     pub month: String,
 }
 
+/// Response from `POST /v2/api-keys`. `api_key` is the plaintext key, returned
+/// exactly once at creation.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiKeyCreateResponse {
+    pub api_key: String,
+    #[serde(default)]
+    pub api_key_id: String,
+    #[serde(default)]
+    pub prefix: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct MeResponse {
     pub user_id: String,
@@ -133,6 +144,14 @@ impl ApiClient {
             Some(serde_json::json!({ "pending_token": pending_token, "code": code })),
         )
         .await
+    }
+
+    /// Mint a fresh API key for the authenticated account (session or api_key
+    /// bearer). The plaintext `api_key` is returned exactly once. Used by
+    /// `login` to recover a lost local key without touching the bootstrap path.
+    pub async fn create_api_key(&self, name: &str) -> ApiResult<ApiKeyCreateResponse> {
+        self.post("/v2/api-keys", Some(serde_json::json!({ "name": name })))
+            .await
     }
 }
 

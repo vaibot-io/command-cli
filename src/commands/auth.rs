@@ -16,7 +16,7 @@ pub async fn login(device: bool, no_browser: bool, api_url: Option<String>) -> R
     let opts = LoginOptions {
         mode: mode_for(device),
         no_browser,
-        issuer: api_url,
+        issuer: api_url.clone(),
         env,
     };
     let cred = broker.login(opts, &stdout_print).await?;
@@ -31,7 +31,46 @@ pub async fn login(device: bool, no_browser: bool, api_url: Option<String>) -> R
     if let Some(scope) = cred.scope {
         println!("  scope: {scope}");
     }
+
+    // Local account recovery: if this machine has no api_key for the plugin/guard
+    // to use as its Bearer (e.g. it was lost), mint one via the session we just
+    // established and save it. Best-effort — narrates on failure, never fails an
+    // otherwise-successful login.
+    ensure_local_api_key(env, api_url.as_deref()).await;
     Ok(())
+}
+
+/// Ensure `credentials.json` holds an api_key for `env` — the Bearer the plugin
+/// and guard read. If it's missing (e.g. the local key was lost), mint a fresh
+/// one via the current session and persist it. No-op when a key already exists,
+/// so routine logins don't churn keys. Best-effort: narrates, never panics.
+async fn ensure_local_api_key(env: crate::config::creds::VaibotEnv, api_url: Option<&str>) {
+    use crate::api::ApiResult;
+    use crate::config::creds::{api_key_for_env, load_store};
+    use crate::config::{credentials_path, ProcessEnv};
+
+    let store = load_store(&credentials_path(&ProcessEnv));
+    if api_key_for_env(&store, env).is_some() {
+        return;
+    }
+
+    let client = match super::resolve_api_client(api_url, None).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("  Note: couldn't provision an API key ({e}). Set VAIBOT_API_KEY or re-run `vaibot login`.");
+            return;
+        }
+    };
+    let host = whoami::fallible::hostname().unwrap_or_else(|_| "cli".to_string());
+    match client.create_api_key(&format!("cli-{host}")).await {
+        ApiResult::Ok { data, .. } => match crate::broker::file::persist_api_key(env, data.api_key) {
+            Ok(()) => println!("  ✔ Recovered an API key for this machine (saved to credentials.json)."),
+            Err(e) => eprintln!("  Note: minted a key but saving it failed ({e})."),
+        },
+        ApiResult::Err { error, status } => {
+            eprintln!("  Note: couldn't provision an API key ({status}: {error}). Set VAIBOT_API_KEY manually.");
+        }
+    }
 }
 
 /// `vaibot logout [--all-hosts]`.
