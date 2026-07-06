@@ -7,8 +7,10 @@
 //! and the same dispatch (a faithful port of the "registered as a sibling
 //! top-level key" alias — clap can't add a nested-subcommand alias).
 //!
-//! `--version` is pinned to "0.3.0" to preserve the TS contract that
-//! `vaibot --version` prints 0.3.0, even though the Rust crate is at 0.1.0.
+//! `--version` reflects the crate version (`env!("CARGO_PKG_VERSION")`), so
+//! `vaibot --version` always prints what `cargo install` resolved. It was
+//! previously pinned to "0.3.0" to mirror the legacy TS CLI's version; that
+//! froze `--version` while the crate advanced (0.4.x+), so it was unpinned.
 
 use clap::{Parser, Subcommand};
 
@@ -17,7 +19,7 @@ use crate::commands::{account::AccountCmd, gateway::GatewayCmd, guard::GuardCmd,
 #[derive(Parser, Debug)]
 #[command(
     name = "vaibot",
-    version = "0.3.0",
+    version = env!("CARGO_PKG_VERSION"),
     about = "Install, govern, and observe the VAIBot stack",
     long_about = "VAIBot front-door CLI: one installer/supervisor for guard, gateway, \
 plugins, policy, and MCP across the machine-intelligence lifecycle. The CLI is an \

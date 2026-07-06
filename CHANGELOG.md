@@ -2,6 +2,22 @@
 
 All notable changes to the `vaibot` CLI (`command-cli`).
 
+## [0.5.0] — 2026-07-05 — account key recovery
+
+### Added
+- `vaibot login` now **recovers a lost local API key**: when `credentials.json`
+  has no api_key for the resolved env, it mints one via the session just
+  established (`POST /v2/api-keys`) and persists it. No-op when a key already
+  exists, so routine logins don't churn keys. Best-effort — narrates on failure,
+  never fails an otherwise-successful login. No re-bootstrap dependency and no
+  takeover surface (only a verified session grants a key).
+
+### Changed
+- `vaibot --version` now reflects the **actual crate version** (`0.5.0`). It was
+  previously pinned to `"0.3.0"` to mirror the legacy TS CLI, which left
+  `--version` frozen while the crate advanced (0.4.x+) — so `--version` no
+  longer matched what `cargo install` resolved. Unpinned.
+
 ## [0.4.1] — 2026-07-04 — guard-first install + universal installer
 
 ### Added
