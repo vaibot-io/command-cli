@@ -12,8 +12,11 @@ All notable changes to the `vaibot` CLI (`command-cli`).
   never fails an otherwise-successful login. No re-bootstrap dependency and no
   takeover surface (only a verified session grants a key).
 
-_Note: `vaibot --version` remains pinned to `0.3.0` by design (TS-contract
-compatibility); the crate/crates.io version is what advances._
+### Changed
+- `vaibot --version` now reflects the **actual crate version** (`0.5.0`). It was
+  previously pinned to `"0.3.0"` to mirror the legacy TS CLI, which left
+  `--version` frozen while the crate advanced (0.4.x+) — so `--version` no
+  longer matched what `cargo install` resolved. Unpinned.
 
 ## [0.4.1] — 2026-07-04 — guard-first install + universal installer
 

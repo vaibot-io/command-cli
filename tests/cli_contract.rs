@@ -18,12 +18,13 @@ fn vaibot() -> Command {
 }
 
 #[test]
-fn version_is_pinned_to_0_3_0() {
+fn version_matches_crate() {
+    // `--version` now tracks the crate version (was pinned to "0.3.0").
     vaibot()
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("0.3.0"));
+        .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
 }
 
 /// noun ⇒ args. Every entry must exit 2 with the canonical "not yet wired" line.
