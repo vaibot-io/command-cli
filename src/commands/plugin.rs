@@ -90,10 +90,11 @@ async fn add(host: String, skip_guard: bool, skip_plugin: bool) -> Result<(), Cl
     Ok(())
 }
 
-/// Report a successful `plugin add` to the API's install counter. Especially useful
-/// for Cursor, whose git-clone install produces no npm download signal. Best-effort:
-/// opt-out-able, needs a key, short-timeout, and every failure is swallowed.
-async fn report_plugin_install(h: Host) {
+/// Report a successful plugin install to the API's install counter — from BOTH
+/// `plugin add` and `init` (so init-driven installs are counted too). Especially
+/// useful for Cursor, whose git-clone install produces no npm download signal.
+/// Best-effort: opt-out-able, needs a key, short-timeout, every failure swallowed.
+pub(crate) async fn report_plugin_install(h: Host) {
     // Privacy opt-out (either flag disables it).
     if env_opt_out("VAIBOT_NO_TELEMETRY") || env_opt_out("DO_NOT_TRACK") {
         return;

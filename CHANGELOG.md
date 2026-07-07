@@ -2,6 +2,20 @@
 
 All notable changes to the `vaibot` CLI (`command-cli`).
 
+## [0.6.1] — unreleased — Platinum `vaibot init` (reliability + clarity)
+
+### Changed
+- **`vaibot init` reworked for reliability + clarity.** Every step is now
+  independent and **best-effort** — a component that fails warns and the flow
+  continues (previously a guard-setup error would `?`-abort the *entire* init,
+  leaving a half-set-up machine; that hard-fail is the likely reason people were
+  reverting to 0.4.1). The flow is interactive with a **y/n before each item**
+  (default **Yes**; `--yes` accepts all), asks about **email upfront**, and runs in
+  a saner order: **account → email → guard → MCP server → plugins**. Plugins are
+  offered per detected agent with **Codex and Cursor last** (they're the most
+  interactive to install). Ends with a one-line summary of what installed / skipped
+  / failed. Init-driven plugin installs are now counted by the install telemetry too.
+
 ## [0.6.0] — unreleased — Cursor plugin support + install telemetry
 
 ### Added
