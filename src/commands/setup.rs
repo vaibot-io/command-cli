@@ -51,12 +51,20 @@ pub async fn init(
     }
     let env = requested;
     let store = load_store(&credentials_path(&ProcessEnv));
-    println!("▸ Environment: {env}");
+    println!("\n▸ VAIBot init  ({env})");
+    if !yes {
+        println!(
+            "  I'll confirm each step — press Enter to accept the default [Y/n], or re-run with --yes to accept all.\n"
+        );
+    }
+    // Every step below is INDEPENDENT + best-effort: one component failing warns and
+    // moves on (never aborts init), and `summary` records the outcome of each.
+    let mut summary: Vec<String> = Vec::new();
 
-    // 1. Interactive login, unless skipped, a key for THIS env exists, OR a valid
-    //    session already exists. `vaibot login` writes an OAuth *session*, not an
-    //    api_key — the old key-only check missed it and re-ran OAuth (which then hit
-    //    an invalid-redirect error on the re-auth). Recognize the session and skip.
+    // ── Step 1/5 — Account ───────────────────────────────────────────────────────
+    // Recognize an existing OAuth session or key; else interactive login; else
+    // bootstrap a free machine account so a fresh machine goes zero-to-installed.
+    println!("Step 1/5 — Account");
     let have_key = api_key.is_some() || api_key_for_env(&store, env).is_some();
     let existing = get_broker()
         .whoami(Some(crate::broker::EnvOpt { env: Some(env) }))
@@ -64,7 +72,7 @@ pub async fn init(
         .ok()
         .flatten();
     if !skip_login && api_key.is_none() && !have_key && existing.is_none() {
-        println!("▸ Logging in...");
+        println!("  Logging in...");
         let opts = LoginOptions {
             mode: mode_for(false),
             no_browser: false,
@@ -76,64 +84,84 @@ pub async fn init(
         }
     } else if let Some(who) = &existing {
         let id = who.email.clone().unwrap_or_else(|| who.subject.clone());
-        println!("▸ Using existing login: {id}");
+        println!("  Using existing login: {id}");
     }
-
-    // 2. Ensure an API key exists. A provided --api-key wins; otherwise, if
-    //    nothing is resolvable yet, bootstrap a free account by machine
-    //    fingerprint (mirrors the Node setup.ts onboarding) so a fresh machine
-    //    goes zero-to-installed.
     if let Some(key) = &api_key {
         persist_api_key(env, key.clone())?;
     } else if api_key_for_env(&load_store(&credentials_path(&ProcessEnv)), env).is_none() {
         bootstrap_account(env, api_url.as_deref()).await;
     }
-    // Make `env` the active environment — covers the case where its key already
-    // existed (no persist/bootstrap ran). Preserves the other env's stored key.
     let _ = save_active_env(&credentials_path(&ProcessEnv), env);
+    let has_key = api_key_for_env(&load_store(&credentials_path(&ProcessEnv)), env).is_some();
+    summary.push(if has_key { "account ✓".into() } else { "account ✗ (no key)".into() });
 
-    // 3. Optional: link an email to the account (magic link). Interactive only
-    //    (skipped with --yes), mirrors setup.ts promptAndLinkEmail.
-    link_email(env, api_url.as_deref(), yes).await;
+    // ── Step 2/5 — Email (upfront; y/n-gated inside link_email) ───────────────────
+    println!("\nStep 2/5 — Email");
+    summary.push(link_email(env, api_url.as_deref(), yes).await.into());
 
-    // 4. First-class guard install (host-agnostic): the guard is the core local
-    //    runtime, so `init` always installs it. The guard derives its key + the
-    //    governance/provenance bases + the signed-policy feed from the creds store
-    //    itself (v3), and runs on its built-in floor until VAIBot's signed-policy
-    //    public key is provisioned (a later, server-side step — NOT a customer
-    //    concern; the customer never holds a signing key). We still gate the
-    //    install on a resolvable key so we can warn early when login is needed.
-    //    Agents are wired separately via `vaibot plugin add <claudecode|codex|openclaw>`.
+    // ── Step 3/5 — Guard (BEST-EFFORT — this is the fix: it never aborts init) ────
+    println!("\nStep 3/5 — Guard  (the local enforcement + audit daemon — the core runtime)");
     let store = load_store(&credentials_path(&ProcessEnv));
-    match api_key_for_env(&store, env) {
-        Some(_) => install_guard()?,
-        None => println!(
-            "\n[warn] No API key resolved — skipping guard install. Run `vaibot login`, then `vaibot guard install`."
-        ),
+    if api_key_for_env(&store, env).is_none() {
+        println!("  [warn] No API key resolved — skipping the guard. Run `vaibot login`, then `vaibot guard install`.");
+        summary.push("guard ✗ (no key)".into());
+    } else if confirm(yes, "  Install the VAIBot guard now? [Y/n] ") {
+        match install_guard() {
+            Ok(()) => summary.push("guard ✓".into()),
+            Err(e) => {
+                println!("  [warn] Guard install hit a snag: {e}");
+                println!("         Not fatal — the plugins self-spawn the guard on the first tool call.");
+                println!("         Re-try later with `vaibot guard install`.");
+                summary.push("guard ✗".into());
+            }
+        }
+    } else {
+        println!("  Skipped — install later with `vaibot guard install`. (Governance won't enforce locally until you do.)");
+        summary.push("guard — skipped".into());
     }
-    // 5.5 Optional: set the governance floor (preset) so the guard pulls a
-    //     meaningful posture from its first fetch — "floor chosen → enforced".
+    // Optional governance floor (preset), so the guard pulls a posture on first fetch.
     if let Some(flavor) = preset.as_deref() {
         apply_preset_at_init(env, api_url.as_deref(), flavor).await;
     }
 
-    // 5. Auto-detect installed agents and offer to wire each.
-    wire_detected_hosts(yes);
-
-    // 6. Reconcile the MCP server to THIS env (production unless an exempt admin
-    //    chose staging): re-pin any host that already has a `vaibot` entry so a
-    //    stale staging registration moves to production. With --with-mcp, register
-    //    it on every detected agent too. Uses the init env explicitly, so a staging
-    //    shell override can't leave MCP pointing at staging.
-    println!();
-    if let Err(e) = crate::commands::mcp::connect_to_env(env, None, api_url.as_deref(), !with_mcp) {
-        println!("[warn] MCP reconcile skipped: {e}");
+    // ── Step 4/5 — MCP server (BEFORE plugins) ───────────────────────────────────
+    println!("\nStep 4/5 — MCP server  (agent-facing governance tools your agent can call)");
+    // `--with-mcp` (or --yes) auto-confirms; only_existing=false registers on every
+    // detected agent, not just re-pins existing ones.
+    if confirm(yes || with_mcp, "  Register the VAIBot MCP server on your detected agents? [Y/n] ") {
+        match crate::commands::mcp::connect_to_env(env, None, api_url.as_deref(), false) {
+            Ok(()) => summary.push("MCP ✓".into()),
+            Err(e) => {
+                println!("  [warn] MCP registration skipped: {e}");
+                summary.push("MCP ✗".into());
+            }
+        }
+    } else {
+        // Declining means "register nothing NEW" — but still quietly re-pin any
+        // EXISTING `vaibot` MCP entries to this env (only_existing=true), so a stale
+        // staging registration can't survive a prod init (the split-brain bug the
+        // pre-0.6.1 unconditional reconcile existed to prevent).
+        match crate::commands::mcp::connect_to_env(env, None, api_url.as_deref(), true) {
+            Ok(()) => println!(
+                "  Skipped new registrations — existing ones re-pinned to {env}. Register later with `vaibot mcp connect`."
+            ),
+            Err(_) => println!("  Skipped — register later with `vaibot mcp connect`."),
+        }
+        summary.push("MCP — skipped".into());
     }
+
+    // ── Step 5/5 — Plugins (ordered Claude, OpenClaw, Codex, Cursor; y/n each) ─────
+    println!("\nStep 5/5 — Plugins  (mandatory pre-execution enforcement, one per agent)");
+    wire_hosts_interactive(yes, &mut summary).await;
 
     // Deferred leg (note-only, do not error).
     if with_gateway {
         println!("\nNote: --with-gateway is not yet wired (gateway serve is a shell-out stub).");
     }
+
+    // ── Summary ──────────────────────────────────────────────────────────────────
+    println!("\n▸ Done.  {}", summary.join("  ·  "));
+    println!("  Switch modes anytime: `vaibot mode observe|enforce`. Approve from https://www.vaibot.io.");
     Ok(())
 }
 
@@ -226,42 +254,53 @@ fn machine_fingerprint() -> String {
 /// Optional email link via magic link (mirrors setup.ts `promptAndLinkEmail`).
 /// Interactive: prompts for an email and POSTs /v2/accounts/set-email with the
 /// account's api_key as bearer. No-op on --yes or when no key is resolvable.
-async fn link_email(env: VaibotEnv, api_url: Option<&str>, yes: bool) {
+/// Returns the init-summary label for this step.
+async fn link_email(env: VaibotEnv, api_url: Option<&str>, yes: bool) -> &'static str {
     if yes {
-        return;
+        println!("  Skipped email link (--yes). Link later with `vaibot account claim`.");
+        return "email — skipped (--yes)";
     }
     let store = load_store(&credentials_path(&ProcessEnv));
     // Use the key for THIS env so we hit the matching API base — sending a staging
     // key to the prod endpoint (or vice-versa) is what produced the 401 on set-email.
     let Some(api_key) = api_key_for_env(&store, env) else {
-        return; // nothing to link to for this env
+        println!("  No account key yet — link an email later with `vaibot account claim`.");
+        return "email — skipped (no key)"; // nothing to link to for this env
     };
-    println!("\nLink your account (optional)");
-    let email = prompt("  Email (press Enter to skip): ");
-    if email.is_empty() {
+    if !prompt_yes_no("  Link an email so you can approve from the dashboard & recover your key? [Y/n] ") {
         println!("  Skipped — link later with `vaibot account claim`.");
-        return;
+        return "email — skipped";
+    }
+    let email = prompt("  Email: ");
+    if email.is_empty() {
+        println!("  No email entered — skipped. Link later with `vaibot account claim`.");
+        return "email — skipped";
     }
     let client = match ApiClient::new(api_base_for_env(env, api_url), Some(api_key)) {
         Ok(c) => c,
         Err(e) => {
             println!("  [warn] could not build API client: {e}");
-            return;
+            return "email ✗";
         }
     };
-    claim_email_interactive(&client, &email).await;
+    if claim_email_interactive(&client, &email).await {
+        "email ✓"
+    } else {
+        "email ✗"
+    }
 }
 
 /// The interactive verified-claim flow against a built client. Claims the email;
 /// if it already has an account, prompts for the 6-digit code emailed to that
 /// address and confirms the merge — so this machine ends up operating as that
-/// account. Prints progress; never panics.
-pub async fn claim_email_interactive(client: &ApiClient, email: &str) {
+/// account. Prints progress; never panics. Returns true when the account ends up
+/// with a linked email (including the already-linked case).
+pub async fn claim_email_interactive(client: &ApiClient, email: &str) -> bool {
     match client.claim(email).await {
         ApiResult::Ok { data, .. } if data.verify_required => {
             let Some(token) = data.pending_token else {
                 println!("  [warn] server did not return a verification token — try again.");
-                return;
+                return false;
             };
             println!(
                 "  {}",
@@ -271,17 +310,25 @@ pub async fn claim_email_interactive(client: &ApiClient, email: &str) {
             let code = prompt("  Enter the code (Enter to skip): ");
             if code.is_empty() {
                 println!("  Skipped — re-run `vaibot account claim` to finish.");
-                return;
+                return false;
             }
             match client.claim_confirm(&token, &code).await {
                 ApiResult::Ok { data, .. } if data.merged => {
                     println!("  ✔ Linked — this machine now operates as your account.");
+                    true
                 }
-                ApiResult::Ok { .. } => println!("  ✔ Linked."),
+                ApiResult::Ok { .. } => {
+                    println!("  ✔ Linked.");
+                    true
+                }
                 ApiResult::Err { status: 400, .. } => {
                     println!("  [warn] Incorrect or expired code — re-run `vaibot account claim`.");
+                    false
                 }
-                ApiResult::Err { error, .. } => println!("  [warn] Could not finish linking: {error}"),
+                ApiResult::Err { error, .. } => {
+                    println!("  [warn] Could not finish linking: {error}");
+                    false
+                }
             }
         }
         ApiResult::Ok { data, .. } => {
@@ -291,11 +338,16 @@ pub async fn claim_email_interactive(client: &ApiClient, email: &str) {
                 .or(data.message)
                 .unwrap_or_else(|| "Check your inbox to verify.".to_string());
             println!("  ✔ {msg}");
+            true
         }
         ApiResult::Err { status: 403, .. } => {
             println!("  This account is already linked — manage your email from the dashboard.");
+            true
         }
-        ApiResult::Err { error, .. } => println!("  [warn] Could not link email: {error}"),
+        ApiResult::Err { error, .. } => {
+            println!("  [warn] Could not link email: {error}");
+            false
+        }
     }
 }
 
@@ -343,26 +395,52 @@ fn prompt_yes_no(label: &str) -> bool {
     ans.is_empty() || ans == "y" || ans == "yes"
 }
 
-/// Detect which agent CLIs are on PATH and wire each — after a prompt, or
-/// automatically under --yes. The shared guard was already installed (step 4).
-fn wire_detected_hosts(yes: bool) {
-    let detected: Vec<Host> = Host::ALL.into_iter().filter(|h| h.cli_present()).collect();
+/// Init plugin order: the reliable natives first, then Codex + Cursor LAST — they're
+/// the most interactive/finicky (Codex's enable picker; Cursor's git-clone install),
+/// so a hiccup there lands after everything sturdier is already in.
+const INIT_HOST_ORDER: [Host; 4] =
+    [Host::Claudecode, Host::Openclaw, Host::Codex, Host::Cursor];
+
+/// Offer to install the circuit-breaker plugin for each DETECTED agent, in a fixed
+/// order, one y/n at a time. Best-effort: a failure warns and moves to the next.
+/// Records each outcome into `summary`.
+async fn wire_hosts_interactive(yes: bool, summary: &mut Vec<String>) {
+    let detected: Vec<Host> = INIT_HOST_ORDER
+        .into_iter()
+        .filter(|h| h.cli_present())
+        .collect();
     if detected.is_empty() {
-        println!("\nNo agent CLIs detected on PATH (claude / codex / openclaw).");
-        println!("Install one, then run `vaibot plugin add <host>`.");
+        println!("  No agents detected on PATH (Claude Code / OpenClaw / Codex / Cursor).");
+        println!("  Install one, then run `vaibot plugin add <host>`.");
+        summary.push("plugins — none detected".into());
         return;
     }
     let names: Vec<&str> = detected.iter().map(|h| h.label()).collect();
-    println!("\nDetected agent(s): {}.", names.join(", "));
+    println!("  Detected: {}.", names.join(", "));
     for h in detected {
-        if !(yes || prompt_yes_no(&format!("  Wire {} now? [Y/n] ", h.label()))) {
-            println!("  Skipped — wire later with `vaibot plugin add {}`.", h.key());
+        if !confirm(yes, &format!("  Install the VAIBot plugin for {}? [Y/n] ", h.label())) {
+            println!("    Skipped — add later with `vaibot plugin add {}`.", h.key());
+            summary.push(format!("{} — skipped", h.label()));
             continue;
         }
-        if let Err(e) = crate::commands::plugin::install_host_plugin(h) {
-            println!("  [warn] {} wiring failed: {e}", h.label());
+        match crate::commands::plugin::install_host_plugin(h) {
+            Ok(()) => {
+                // Count init-driven installs too (same best-effort telemetry as `plugin add`).
+                crate::commands::plugin::report_plugin_install(h).await;
+                summary.push(format!("{} ✓", h.label()));
+            }
+            Err(e) => {
+                println!("    [warn] {} plugin install failed: {e} — continuing.", h.label());
+                summary.push(format!("{} ✗", h.label()));
+            }
         }
     }
+}
+
+/// Interactive y/n gate. Accepts unconditionally under --yes; otherwise prompts,
+/// defaulting to YES on Enter.
+fn confirm(yes: bool, label: &str) -> bool {
+    yes || prompt_yes_no(label)
 }
 
 /// First-class, host-agnostic guard install: ensure `@vaibot/guard` is present
@@ -526,5 +604,24 @@ mod tests {
         assert_eq!(fp, machine_fingerprint(), "deterministic");
         // Eyeball against the Node CLI: node -e "sha256(userInfo().username+'@'+hostname())".
         eprintln!("RUST_FINGERPRINT={fp}");
+    }
+
+    #[test]
+    fn init_host_order_puts_codex_and_cursor_last() {
+        use super::INIT_HOST_ORDER;
+        use crate::services::host::Host;
+        assert_eq!(INIT_HOST_ORDER.len(), 4);
+        assert!(INIT_HOST_ORDER[0] == Host::Claudecode, "Claude Code first");
+        let last_two = &INIT_HOST_ORDER[2..];
+        assert!(last_two.contains(&Host::Codex), "Codex in the last two");
+        assert!(last_two.contains(&Host::Cursor), "Cursor in the last two");
+        let idx = |t: Host| INIT_HOST_ORDER.iter().position(|h| *h == t).unwrap();
+        assert!(idx(Host::Openclaw) < idx(Host::Codex), "OpenClaw before Codex");
+    }
+
+    #[test]
+    fn confirm_accepts_all_under_yes() {
+        // --yes short-circuits before any stdin prompt, so this never blocks.
+        assert!(super::confirm(true, "  unreached [Y/n] "));
     }
 }
