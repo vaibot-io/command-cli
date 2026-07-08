@@ -4,16 +4,19 @@
 //!   remove [REAL] — uninstall the host plugin (+ --with-guard for the shared guard).
 //!   update [REAL] — re-pull the guard + host plugin to latest.
 
+use std::time::Duration;
+
 use clap::Subcommand;
 
-use crate::config::creds::{load_store, resolve_credentials};
+use crate::api::ApiClient;
+use crate::config::creds::{api_base_for_env, api_key_for_env, load_store, resolve_credentials};
 use crate::config::{credentials_path, ProcessEnv};
 use crate::error::CliError;
 use crate::services::host::Host;
 use crate::services::installer;
 use crate::services::{is_active_systemd_unit, which};
 
-use super::setup;
+use super::{current_env, setup};
 
 #[derive(Subcommand, Debug)]
 pub enum PluginCmd {
@@ -62,14 +65,14 @@ pub async fn dispatch(cmd: PluginCmd) -> Result<(), CliError> {
             host,
             skip_guard,
             skip_plugin,
-        } => add(host, skip_guard, skip_plugin),
+        } => add(host, skip_guard, skip_plugin).await,
         PluginCmd::List { json } => list(json),
         PluginCmd::Remove { host, with_guard } => remove(host, with_guard),
         PluginCmd::Update { host, skip_guard } => update(host, skip_guard),
     }
 }
 
-fn add(host: String, skip_guard: bool, skip_plugin: bool) -> Result<(), CliError> {
+async fn add(host: String, skip_guard: bool, skip_plugin: bool) -> Result<(), CliError> {
     let h = parse_host(&host)?;
 
     if !skip_guard {
@@ -80,9 +83,50 @@ fn add(host: String, skip_guard: bool, skip_plugin: bool) -> Result<(), CliError
         return Ok(());
     }
     install_host_plugin(h)?;
+    // Best-effort adoption telemetry — bounded + swallowed, never blocks/fails the install.
+    report_plugin_install(h).await;
 
     println!("\n[ok]   {} plugin add complete.", h.label());
     Ok(())
+}
+
+/// Report a successful `plugin add` to the API's install counter. Especially useful
+/// for Cursor, whose git-clone install produces no npm download signal. Best-effort:
+/// opt-out-able, needs a key, short-timeout, and every failure is swallowed.
+async fn report_plugin_install(h: Host) {
+    // Privacy opt-out (either flag disables it).
+    if env_opt_out("VAIBOT_NO_TELEMETRY") || env_opt_out("DO_NOT_TRACK") {
+        return;
+    }
+    let env = current_env();
+    let store = load_store(&credentials_path(&ProcessEnv));
+    let key = match api_key_for_env(&store, env) {
+        Some(k) => k,
+        None => return, // no key → can't attribute; skip (the common add() path has one)
+    };
+    let client = match ApiClient::new(api_base_for_env(env, None), Some(key)) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let body = serde_json::json!({
+        "host": h.key(),
+        "action": "add",
+        "cli_version": env!("CARGO_PKG_VERSION"),
+        "platform": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+    });
+    // Bounded so a slow/unreachable API can't hang the CLI; result ignored.
+    let _ = tokio::time::timeout(
+        Duration::from_secs(4),
+        client.post::<serde_json::Value>("/v2/telemetry/plugin-install", Some(body)),
+    )
+    .await;
+}
+
+/// A telemetry opt-out env var is "on" when set to a non-empty value other than 0/false.
+fn env_opt_out(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+        .unwrap_or(false)
 }
 
 /// Install + verify a single host's circuit-breaker plugin via its native CLI.
