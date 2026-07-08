@@ -2,7 +2,7 @@
 
 All notable changes to the `vaibot` CLI (`command-cli`).
 
-## [0.6.1] — unreleased — Platinum `vaibot init` (reliability + clarity)
+## [0.6.1] — 2026-07-08 — Platinum `vaibot init` (reliability + clarity)
 
 ### Added
 - **Anonymous install telemetry.** A successful `vaibot plugin add <host>` (or an
