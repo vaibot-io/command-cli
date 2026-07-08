@@ -2,7 +2,33 @@
 
 All notable changes to the `vaibot` CLI (`command-cli`).
 
-## [0.6.0] — unreleased — Cursor plugin support + install telemetry
+## [0.6.1] — unreleased — Platinum `vaibot init` (reliability + clarity)
+
+### Added
+- **Anonymous install telemetry.** A successful `vaibot plugin add <host>` (or an
+  init-driven plugin install) sends a best-effort event to the API
+  (`POST /v2/telemetry/plugin-install`) — just the host, CLI version, and platform —
+  so hosts distributed outside npm (notably the git-cloned Cursor plugin, which
+  produces no npm download stat) get an adoption signal. **It's anonymous: nothing
+  that identifies you or your account is stored — only the aggregate
+  host/version/platform count.** (The request is authenticated purely as an abuse
+  gate; identity is never read or stored.) Bounded (≤4s), swallows every error, and
+  never blocks or fails the install. **Opt out** with `VAIBOT_NO_TELEMETRY=1` or the
+  standard `DO_NOT_TRACK=1`. Requires the API's migration 032 + endpoint.
+
+### Changed
+- **`vaibot init` reworked for reliability + clarity.** Every step is now
+  independent and **best-effort** — a component that fails warns and the flow
+  continues (previously a guard-setup error would `?`-abort the *entire* init,
+  leaving a half-set-up machine; that hard-fail is the likely reason people were
+  reverting to 0.4.1). The flow is interactive with a **y/n before each item**
+  (default **Yes**; `--yes` accepts all), asks about **email upfront**, and runs in
+  a saner order: **account → email → guard → MCP server → plugins**. Plugins are
+  offered per detected agent with **Codex and Cursor last** (they're the most
+  interactive to install). Ends with a one-line summary of what installed / skipped
+  / failed. Init-driven installs are counted by the anonymous install telemetry too.
+
+## [0.6.0] — 2026-07-06 — Cursor plugin support
 
 ### Added
 - **`cursor` is now a supported host for `vaibot plugin add/remove/update`.** Cursor
@@ -14,14 +40,6 @@ All notable changes to the `vaibot` CLI (`command-cli`).
   deletes the dir — all idempotent; requires `git`. Restart Cursor (and enable
   `vaibot-cursor` in Customize if prompted) to activate. The Cursor MCP server stays
   file-based (`~/.cursor/mcp.json`), so `vaibot mcp connect` skips Cursor.
-- **CLI install telemetry.** A successful `vaibot plugin add <host>` now sends a
-  best-effort event to the API (`POST /v2/telemetry/plugin-install`) — host, CLI
-  version, and platform, attributed to your account — so hosts distributed outside
-  npm (notably the git-cloned Cursor plugin, which produces no npm download stat)
-  get an adoption signal. It's bounded (≤4s), swallows every error, and never blocks
-  or fails the install. **Opt out** with `VAIBOT_NO_TELEMETRY=1` or the standard
-  `DO_NOT_TRACK=1`. Requires the API's migration 032 + endpoint.
-
 ## [0.5.0] — 2026-07-05 — account key recovery
 
 ### Added
