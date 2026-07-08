@@ -97,7 +97,7 @@ pub async fn init(
 
     // ── Step 2/5 — Email (upfront; y/n-gated inside link_email) ───────────────────
     println!("\nStep 2/5 — Email");
-    link_email(env, api_url.as_deref(), yes).await;
+    summary.push(link_email(env, api_url.as_deref(), yes).await.into());
 
     // ── Step 3/5 — Guard (BEST-EFFORT — this is the fix: it never aborts init) ────
     println!("\nStep 3/5 — Guard  (the local enforcement + audit daemon — the core runtime)");
@@ -137,7 +137,16 @@ pub async fn init(
             }
         }
     } else {
-        println!("  Skipped — register later with `vaibot mcp connect`.");
+        // Declining means "register nothing NEW" — but still quietly re-pin any
+        // EXISTING `vaibot` MCP entries to this env (only_existing=true), so a stale
+        // staging registration can't survive a prod init (the split-brain bug the
+        // pre-0.6.1 unconditional reconcile existed to prevent).
+        match crate::commands::mcp::connect_to_env(env, None, api_url.as_deref(), true) {
+            Ok(()) => println!(
+                "  Skipped new registrations — existing ones re-pinned to {env}. Register later with `vaibot mcp connect`."
+            ),
+            Err(_) => println!("  Skipped — register later with `vaibot mcp connect`."),
+        }
         summary.push("MCP — skipped".into());
     }
 
@@ -245,47 +254,53 @@ fn machine_fingerprint() -> String {
 /// Optional email link via magic link (mirrors setup.ts `promptAndLinkEmail`).
 /// Interactive: prompts for an email and POSTs /v2/accounts/set-email with the
 /// account's api_key as bearer. No-op on --yes or when no key is resolvable.
-async fn link_email(env: VaibotEnv, api_url: Option<&str>, yes: bool) {
+/// Returns the init-summary label for this step.
+async fn link_email(env: VaibotEnv, api_url: Option<&str>, yes: bool) -> &'static str {
     if yes {
         println!("  Skipped email link (--yes). Link later with `vaibot account claim`.");
-        return;
+        return "email — skipped (--yes)";
     }
     let store = load_store(&credentials_path(&ProcessEnv));
     // Use the key for THIS env so we hit the matching API base — sending a staging
     // key to the prod endpoint (or vice-versa) is what produced the 401 on set-email.
     let Some(api_key) = api_key_for_env(&store, env) else {
         println!("  No account key yet — link an email later with `vaibot account claim`.");
-        return; // nothing to link to for this env
+        return "email — skipped (no key)"; // nothing to link to for this env
     };
     if !prompt_yes_no("  Link an email so you can approve from the dashboard & recover your key? [Y/n] ") {
         println!("  Skipped — link later with `vaibot account claim`.");
-        return;
+        return "email — skipped";
     }
     let email = prompt("  Email: ");
     if email.is_empty() {
         println!("  No email entered — skipped. Link later with `vaibot account claim`.");
-        return;
+        return "email — skipped";
     }
     let client = match ApiClient::new(api_base_for_env(env, api_url), Some(api_key)) {
         Ok(c) => c,
         Err(e) => {
             println!("  [warn] could not build API client: {e}");
-            return;
+            return "email ✗";
         }
     };
-    claim_email_interactive(&client, &email).await;
+    if claim_email_interactive(&client, &email).await {
+        "email ✓"
+    } else {
+        "email ✗"
+    }
 }
 
 /// The interactive verified-claim flow against a built client. Claims the email;
 /// if it already has an account, prompts for the 6-digit code emailed to that
 /// address and confirms the merge — so this machine ends up operating as that
-/// account. Prints progress; never panics.
-pub async fn claim_email_interactive(client: &ApiClient, email: &str) {
+/// account. Prints progress; never panics. Returns true when the account ends up
+/// with a linked email (including the already-linked case).
+pub async fn claim_email_interactive(client: &ApiClient, email: &str) -> bool {
     match client.claim(email).await {
         ApiResult::Ok { data, .. } if data.verify_required => {
             let Some(token) = data.pending_token else {
                 println!("  [warn] server did not return a verification token — try again.");
-                return;
+                return false;
             };
             println!(
                 "  {}",
@@ -295,17 +310,25 @@ pub async fn claim_email_interactive(client: &ApiClient, email: &str) {
             let code = prompt("  Enter the code (Enter to skip): ");
             if code.is_empty() {
                 println!("  Skipped — re-run `vaibot account claim` to finish.");
-                return;
+                return false;
             }
             match client.claim_confirm(&token, &code).await {
                 ApiResult::Ok { data, .. } if data.merged => {
                     println!("  ✔ Linked — this machine now operates as your account.");
+                    true
                 }
-                ApiResult::Ok { .. } => println!("  ✔ Linked."),
+                ApiResult::Ok { .. } => {
+                    println!("  ✔ Linked.");
+                    true
+                }
                 ApiResult::Err { status: 400, .. } => {
                     println!("  [warn] Incorrect or expired code — re-run `vaibot account claim`.");
+                    false
                 }
-                ApiResult::Err { error, .. } => println!("  [warn] Could not finish linking: {error}"),
+                ApiResult::Err { error, .. } => {
+                    println!("  [warn] Could not finish linking: {error}");
+                    false
+                }
             }
         }
         ApiResult::Ok { data, .. } => {
@@ -315,11 +338,16 @@ pub async fn claim_email_interactive(client: &ApiClient, email: &str) {
                 .or(data.message)
                 .unwrap_or_else(|| "Check your inbox to verify.".to_string());
             println!("  ✔ {msg}");
+            true
         }
         ApiResult::Err { status: 403, .. } => {
             println!("  This account is already linked — manage your email from the dashboard.");
+            true
         }
-        ApiResult::Err { error, .. } => println!("  [warn] Could not link email: {error}"),
+        ApiResult::Err { error, .. } => {
+            println!("  [warn] Could not link email: {error}");
+            false
+        }
     }
 }
 
