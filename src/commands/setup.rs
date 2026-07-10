@@ -587,9 +587,64 @@ fn present(b: bool) -> &'static str {
     }
 }
 
-/// `vaibot update` — STUB.
+/// `vaibot update` — check for and install the latest VAIBot CLI.
 pub fn update() -> Result<(), CliError> {
-    Err(CliError::stub("update"))
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| CliError::Runtime(format!("Failed to create runtime: {e}")))?;
+
+    rt.block_on(async {
+        let non_interactive = std::env::var("VAIBOT_NON_INTERACTIVE").is_ok();
+        let current = env!("CARGO_PKG_VERSION");
+
+        // Fetch latest version
+        eprintln!("Checking for VAIBot updates...");
+        let latest = crate::services::updater::fetch_latest_version()
+            .await
+            .map_err(|e| CliError::Runtime(format!("Failed to check version: {e}")))?;
+
+        if crate::services::updater::is_update_available(current, &latest) {
+            println!();
+            println!("==> Updating VAIBot CLI from {} to {}", current, latest);
+            println!("==> Detected platform: {}", detect_platform());
+            println!("==> Resolved version: {}", latest);
+
+            crate::services::updater::perform_update(non_interactive)
+                .await
+                .map_err(|e| CliError::Runtime(format!("Update failed: {e}")))?;
+
+            println!();
+            println!("VAIBot CLI {} installed successfully.", latest);
+            if !non_interactive {
+                println!();
+                println!("🎉 Update ran successfully! Please restart your terminal.");
+            }
+            Ok(())
+        } else {
+            println!("✓ VAIBot CLI {} is already up to date.", current);
+            Ok(())
+        }
+    })
+}
+
+/// Detect the current platform (macOS/Linux architecture).
+fn detect_platform() -> String {
+    let os = if cfg!(target_os = "macos") {
+        "macOS"
+    } else if cfg!(target_os = "linux") {
+        "Linux"
+    } else {
+        "Unknown"
+    };
+
+    let arch = if cfg!(target_arch = "aarch64") {
+        "Apple Silicon"
+    } else if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else {
+        "Unknown"
+    };
+
+    format!("{} ({})", os, arch)
 }
 
 #[cfg(test)]

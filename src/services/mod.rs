@@ -9,6 +9,7 @@ pub mod guard_http;
 pub mod host;
 pub mod installer;
 pub mod signing_keys;
+pub mod updater;
 
 use std::path::PathBuf;
 use std::process::Command;
