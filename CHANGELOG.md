@@ -2,6 +2,28 @@
 
 All notable changes to the `vaibot` CLI (`command-cli`).
 
+## [0.6.2] — 2026-07-10 — CLI self-update
+
+### Added
+- **`vaibot update` — self-update.** Checks crates.io for the latest `vaibot`
+  release and, if newer, downloads and runs the official installer. Other
+  commands also show a best-effort **"update available"** notice (cached 24h,
+  bounded to 2s, never blocking). Opt out with `VAIBOT_NO_UPDATE_CHECK=1`.
+- **Installer verification.** Before the installer is executed it is fetched over
+  HTTPS, its HTTP status is checked, and its payload is validated (non-empty,
+  shebang, size cap, not an HTML page). The **SHA-256 is printed** for
+  auditability; set `VAIBOT_INSTALL_SHA256` to pin a known-good digest (a
+  mismatch aborts), and in interactive mode you confirm the digest before it
+  runs.
+
+### Fixed
+- **`vaibot update` no longer panics.** The command created a nested tokio
+  runtime inside the already-async dispatch and aborted with "Cannot start a
+  runtime from within a runtime" on every invocation.
+- **Version parsing hardened** so a malformed version string (prerelease,
+  `v`-prefix, extra components) can't silently misparse and hide or fabricate an
+  update. Double-digit components now compare numerically (`0.10.0 > 0.9.0`).
+
 ## [0.6.1] — 2026-07-08 — Platinum `vaibot init` (reliability + clarity)
 
 ### Added

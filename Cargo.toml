@@ -1,6 +1,6 @@
 [package]
 name = "vaibot"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2021"
 rust-version = "1.80"
 description = "VAIBot front-door CLI: one installer/supervisor for guard, gateway, plugins, policy, and MCP across the machine-intelligence lifecycle."
