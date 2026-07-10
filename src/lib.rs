@@ -93,7 +93,7 @@ pub async fn dispatch(cli: Cli) -> Result<(), CliError> {
         }
         Command::Status { json } => commands::status::run(json, api_url).await,
         Command::Doctor { fix } => commands::setup::doctor(fix).await,
-        Command::Update => commands::setup::update(),
+        Command::Update => commands::setup::update().await,
 
         // ── component groups ──
         Command::Guard { cmd } => commands::guard::dispatch(cmd).await,

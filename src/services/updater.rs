@@ -45,12 +45,31 @@ pub fn is_update_available(current: &str, latest: &str) -> bool {
     parse_version(current) < parse_version(latest)
 }
 
-/// Parse a semantic version string into (major, minor, patch) tuple.
+/// Parse a semantic version string into a (major, minor, patch) tuple.
+///
+/// Tolerant of real-world version strings so a malformed input never silently
+/// collapses a component to 0 (which could hide or fabricate an update):
+///   - an optional leading `v`/`V` is stripped (`v1.2.3` -> (1,2,3));
+///   - prerelease/build suffixes are dropped to the numeric core, so the base
+///     release is used (`1.2.3-beta.1` / `1.2.3+build` -> (1,2,3)). Note this
+///     treats a prerelease as equal to its release; that is intentional here —
+///     we compare against crates.io `max_stable_version`, which is never a
+///     prerelease, so we never offer a downgrade to one;
+///   - extra components beyond patch are ignored (`1.2.3.4` -> (1,2,3));
+///   - missing components default to 0 (`1.2` -> (1,2,0)).
 fn parse_version(version: &str) -> (u32, u32, u32) {
-    let parts: Vec<&str> = version.split('.').collect();
-    let major = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
-    let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-    let patch = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+    // Strip a leading v/V and any prerelease (`-`) or build (`+`) metadata.
+    let core = version
+        .trim()
+        .trim_start_matches(['v', 'V'])
+        .split(['-', '+'])
+        .next()
+        .unwrap_or("");
+
+    let mut nums = core.split('.').map(|s| s.parse::<u32>().unwrap_or(0));
+    let major = nums.next().unwrap_or(0);
+    let minor = nums.next().unwrap_or(0);
+    let patch = nums.next().unwrap_or(0);
     (major, minor, patch)
 }
 
@@ -206,10 +225,39 @@ mod tests {
     }
 
     #[test]
+    fn test_version_parsing_hardened() {
+        // Leading v/V is stripped.
+        assert_eq!(parse_version("v1.2.3"), (1, 2, 3));
+        assert_eq!(parse_version("V0.7.0"), (0, 7, 0));
+        // Prerelease / build metadata collapses to the base release.
+        assert_eq!(parse_version("1.2.3-beta.1"), (1, 2, 3));
+        assert_eq!(parse_version("1.0.0-rc1"), (1, 0, 0));
+        assert_eq!(parse_version("1.2.3+build.5"), (1, 2, 3));
+        // Extra components are ignored; missing ones default to 0.
+        assert_eq!(parse_version("1.2.3.4"), (1, 2, 3));
+        assert_eq!(parse_version("1.2"), (1, 2, 0));
+        assert_eq!(parse_version("  0.6.1  "), (0, 6, 1));
+        // Junk never panics and yields all-zero.
+        assert_eq!(parse_version(""), (0, 0, 0));
+        assert_eq!(parse_version("garbage"), (0, 0, 0));
+    }
+
+    #[test]
     fn test_version_comparison() {
         assert!(is_update_available("0.3.0", "0.4.0"));
         assert!(is_update_available("0.3.0", "1.0.0"));
         assert!(!is_update_available("0.3.0", "0.3.0"));
         assert!(!is_update_available("0.3.0", "0.2.0"));
+    }
+
+    #[test]
+    fn test_version_comparison_hardened() {
+        // Double-digit components must compare numerically, not lexically.
+        assert!(is_update_available("0.9.0", "0.10.0"));
+        assert!(!is_update_available("0.10.0", "0.9.0"));
+        // A prerelease of the same release is not treated as an upgrade.
+        assert!(!is_update_available("1.0.0", "1.0.0-rc1"));
+        // v-prefixed latest still compares correctly.
+        assert!(is_update_available("0.6.1", "v0.7.0"));
     }
 }

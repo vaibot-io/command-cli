@@ -588,42 +588,41 @@ fn present(b: bool) -> &'static str {
 }
 
 /// `vaibot update` — check for and install the latest VAIBot CLI.
-pub fn update() -> Result<(), CliError> {
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| CliError::Runtime(format!("Failed to create runtime: {e}")))?;
+///
+/// Runs inside the caller's existing tokio runtime (dispatch is already async);
+/// creating a nested runtime here would panic with "Cannot start a runtime from
+/// within a runtime".
+pub async fn update() -> Result<(), CliError> {
+    let non_interactive = std::env::var("VAIBOT_NON_INTERACTIVE").is_ok();
+    let current = env!("CARGO_PKG_VERSION");
 
-    rt.block_on(async {
-        let non_interactive = std::env::var("VAIBOT_NON_INTERACTIVE").is_ok();
-        let current = env!("CARGO_PKG_VERSION");
+    // Fetch latest version
+    eprintln!("Checking for VAIBot updates...");
+    let latest = crate::services::updater::fetch_latest_version()
+        .await
+        .map_err(|e| CliError::Runtime(format!("Failed to check version: {e}")))?;
 
-        // Fetch latest version
-        eprintln!("Checking for VAIBot updates...");
-        let latest = crate::services::updater::fetch_latest_version()
+    if crate::services::updater::is_update_available(current, &latest) {
+        println!();
+        println!("==> Updating VAIBot CLI from {} to {}", current, latest);
+        println!("==> Detected platform: {}", detect_platform());
+        println!("==> Resolved version: {}", latest);
+
+        crate::services::updater::perform_update(non_interactive)
             .await
-            .map_err(|e| CliError::Runtime(format!("Failed to check version: {e}")))?;
+            .map_err(|e| CliError::Runtime(format!("Update failed: {e}")))?;
 
-        if crate::services::updater::is_update_available(current, &latest) {
+        println!();
+        println!("VAIBot CLI {} installed successfully.", latest);
+        if !non_interactive {
             println!();
-            println!("==> Updating VAIBot CLI from {} to {}", current, latest);
-            println!("==> Detected platform: {}", detect_platform());
-            println!("==> Resolved version: {}", latest);
-
-            crate::services::updater::perform_update(non_interactive)
-                .await
-                .map_err(|e| CliError::Runtime(format!("Update failed: {e}")))?;
-
-            println!();
-            println!("VAIBot CLI {} installed successfully.", latest);
-            if !non_interactive {
-                println!();
-                println!("🎉 Update ran successfully! Please restart your terminal.");
-            }
-            Ok(())
-        } else {
-            println!("✓ VAIBot CLI {} is already up to date.", current);
-            Ok(())
+            println!("🎉 Update ran successfully! Please restart your terminal.");
         }
-    })
+        Ok(())
+    } else {
+        println!("✓ VAIBot CLI {} is already up to date.", current);
+        Ok(())
+    }
 }
 
 /// Detect the current platform (macOS/Linux architecture).
