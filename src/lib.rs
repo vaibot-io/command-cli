@@ -51,13 +51,10 @@ pub async fn dispatch(cli: Cli) -> Result<(), CliError> {
     commands::enforce_production_env(is_env_gate_exempt(&cli.command), api_url.as_deref()).await?;
 
     // Auto-update check (non-blocking, skip if VAIBOT_NO_UPDATE_CHECK is set or update command).
+    // check_and_notify_update owns its own time budget (and cache fallback), so no
+    // outer timeout is layered here.
     if !matches!(cli.command, Command::Update) && std::env::var("VAIBOT_NO_UPDATE_CHECK").is_err() {
-        if let Ok(Some(latest)) = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            services::updater::check_and_notify_update(),
-        )
-        .await
-        {
+        if let Some(latest) = services::updater::check_and_notify_update().await {
             services::updater::show_update_notification(&latest);
         }
     }

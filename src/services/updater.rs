@@ -138,9 +138,11 @@ pub async fn check_and_notify_update() -> Option<String> {
         return None;
     }
 
-    // Fetch the latest version, with a timeout to avoid blocking the CLI
+    // Fetch the latest version under a single 2s budget so the auto-check never
+    // noticeably blocks the CLI. This is the only timeout on this path — callers
+    // must not wrap it in another.
     let latest = match tokio::time::timeout(
-        std::time::Duration::from_secs(3),
+        std::time::Duration::from_secs(2),
         fetch_latest_version(),
     )
     .await
@@ -177,8 +179,77 @@ pub fn show_update_notification(latest_version: &str) {
     eprintln!();
 }
 
+/// Upper bound on the installer size; a legitimate install.sh is a couple KB.
+const MAX_SCRIPT_BYTES: usize = 1024 * 1024; // 1 MiB
+
+/// Lowercase hex SHA-256 of the given bytes.
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    let mut s = String::with_capacity(digest.len() * 2);
+    for b in digest {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
+
+/// Validate that a downloaded payload looks like a shell installer — not an
+/// HTML error page, a redirect stub, or truncated/garbage — before it is ever
+/// handed to `sh`.
+fn validate_install_script(script: &str) -> Result<()> {
+    if script.len() > MAX_SCRIPT_BYTES {
+        anyhow::bail!(
+            "Installer is unexpectedly large ({} bytes > {} cap); refusing to run",
+            script.len(),
+            MAX_SCRIPT_BYTES
+        );
+    }
+    let head = script.trim_start();
+    if head.is_empty() {
+        anyhow::bail!("Installer download was empty; refusing to run");
+    }
+    // A real installer begins with a shebang. This also rejects HTML error
+    // pages that some hosts serve with a 200 status.
+    if !head.starts_with("#!") {
+        anyhow::bail!("Installer does not begin with a shebang (#!); refusing to run");
+    }
+    let sniff = head[..head.len().min(256)].to_ascii_lowercase();
+    if sniff.contains("<!doctype") || sniff.contains("<html") {
+        anyhow::bail!("Installer looks like an HTML page, not a shell script; refusing to run");
+    }
+    Ok(())
+}
+
+/// Prompt on the terminal to confirm executing the installer with `digest`.
+fn confirm_execute(digest: &str) -> Result<bool> {
+    use std::io::Write;
+    eprint!("Run this installer (SHA-256 {digest})? [y/N] ");
+    std::io::stderr().flush().ok();
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    Ok(matches!(input.trim().to_ascii_lowercase().as_str(), "y" | "yes"))
+}
+
 /// Perform the actual update by downloading and running the install script.
+///
+/// Hardening applied before the script reaches a shell:
+///   - the transport is asserted to be HTTPS;
+///   - a non-2xx response aborts instead of piping an error page into `sh`;
+///   - the payload is validated (non-empty, shebang, size cap, not HTML);
+///   - the SHA-256 is always printed for auditability, and if
+///     `VAIBOT_INSTALL_SHA256` is set the download must match it or we abort
+///     (lets CI and cautious users pin a known-good installer);
+///   - in interactive mode the user must confirm the digest before execution.
+///
+/// This does NOT defend against a compromised install host serving a
+/// well-formed but malicious script — that requires signed releases, tracked
+/// separately.
 pub async fn perform_update(non_interactive: bool) -> Result<()> {
+    // Defense in depth: never fetch the installer over a non-TLS transport.
+    if !INSTALL_SCRIPT_URL.starts_with("https://") {
+        anyhow::bail!("Refusing to fetch installer over non-HTTPS URL: {INSTALL_SCRIPT_URL}");
+    }
+
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
@@ -189,12 +260,36 @@ pub async fn perform_update(non_interactive: bool) -> Result<()> {
         .header("User-Agent", "vaibot-cli")
         .send()
         .await?
+        .error_for_status()? // 4xx/5xx must not be executed as a script
         .text()
         .await?;
 
-    // Write to temp file and execute
+    validate_install_script(&script)?;
+
+    let digest = sha256_hex(script.as_bytes());
+    eprintln!("   SHA-256: {digest}");
+
+    // Optional pinning: abort if the download doesn't match a caller-supplied hash.
+    if let Ok(expected) = std::env::var("VAIBOT_INSTALL_SHA256") {
+        let expected = expected.trim().to_ascii_lowercase();
+        if !expected.is_empty() && expected != digest {
+            anyhow::bail!(
+                "Installer SHA-256 mismatch: expected {expected}, got {digest}; aborting."
+            );
+        }
+        if !expected.is_empty() {
+            eprintln!("   ✓ Matches pinned VAIBOT_INSTALL_SHA256");
+        }
+    }
+
+    // In interactive mode, require explicit confirmation before executing.
+    if !non_interactive && !confirm_execute(&digest)? {
+        anyhow::bail!("Update cancelled.");
+    }
+
+    // Write to a private temp file and execute.
     let temp_script = tempfile::NamedTempFile::new()?;
-    std::fs::write(temp_script.path(), &script)?;
+    std::fs::write(temp_script.path(), script.as_bytes())?;
 
     let mut cmd = std::process::Command::new("sh");
     cmd.arg(temp_script.path());
@@ -248,6 +343,45 @@ mod tests {
         assert!(is_update_available("0.3.0", "1.0.0"));
         assert!(!is_update_available("0.3.0", "0.3.0"));
         assert!(!is_update_available("0.3.0", "0.2.0"));
+    }
+
+    // Hits the network (vaibot.io) and proves a wrong pinned hash aborts BEFORE
+    // the installer is executed. Run explicitly: `cargo test -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn perform_update_aborts_on_pin_mismatch() {
+        std::env::set_var("VAIBOT_INSTALL_SHA256", "deadbeef");
+        let res = perform_update(true).await;
+        std::env::remove_var("VAIBOT_INSTALL_SHA256");
+        let err = res.expect_err("must abort on pin mismatch").to_string();
+        assert!(err.contains("SHA-256 mismatch"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_sha256_hex() {
+        // Known vector: SHA-256 of the empty input.
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn test_validate_install_script() {
+        // A real installer with a shebang passes.
+        assert!(validate_install_script("#!/usr/bin/env sh\necho hi\n").is_ok());
+        // Leading whitespace before the shebang is tolerated.
+        assert!(validate_install_script("\n  #!/bin/sh\n").is_ok());
+        // Empty / whitespace-only is rejected.
+        assert!(validate_install_script("").is_err());
+        assert!(validate_install_script("   \n ").is_err());
+        // No shebang is rejected.
+        assert!(validate_install_script("echo not an installer").is_err());
+        // HTML error pages served with 200 are rejected.
+        assert!(validate_install_script("<!DOCTYPE html><html>404</html>").is_err());
+        // Oversized payloads are rejected.
+        let huge = format!("#!/bin/sh\n{}", "a".repeat(MAX_SCRIPT_BYTES));
+        assert!(validate_install_script(&huge).is_err());
     }
 
     #[test]
