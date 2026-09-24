@@ -97,6 +97,8 @@ pub async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Gateway { cmd } => commands::gateway::dispatch(cmd).await,
         Command::Plugin { cmd } => commands::plugin::dispatch(cmd).await,
         Command::Policy { cmd } => commands::policy::dispatch(cmd, api_url).await,
+        Command::Contain { reason } => commands::contain::contain(reason, api_url).await,
+        Command::Release => commands::contain::release(api_url).await,
         Command::Mode { cmd } => commands::mode::dispatch(cmd, api_url).await,
         Command::Mcp { cmd } => commands::mcp::dispatch(cmd, api_url),
         Command::Provenance { cmd } => commands::provenance::dispatch(cmd, api_url).await,

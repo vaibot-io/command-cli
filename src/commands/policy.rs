@@ -390,7 +390,7 @@ async fn lock_step_up(client: &ApiClient, action: &str, done_msg: &str) -> Resul
 }
 
 /// Print a prompt and read one line from stdin.
-fn prompt_line(msg: &str) -> Result<String, CliError> {
+pub(crate) fn prompt_line(msg: &str) -> Result<String, CliError> {
     use std::io::Write;
     print!("{msg}");
     std::io::stdout().flush().ok();

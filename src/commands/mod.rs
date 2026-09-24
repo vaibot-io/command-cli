@@ -7,6 +7,7 @@
 
 pub mod account;
 pub mod auth;
+pub mod contain;
 pub mod gateway;
 pub mod guard;
 pub mod mcp;

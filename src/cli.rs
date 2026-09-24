@@ -126,6 +126,16 @@ pub enum Command {
         #[command(subcommand)]
         cmd: PolicyCmd,
     },
+    // ── containment ──
+    /// Stop every agent on this account, everywhere, right now.
+    Contain {
+        /// Why — recorded on the receipt and shown in the dashboard banner.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Lift containment (administrator + emailed code).
+    Release,
+
     /// View / set the governance mode (observe | enforce).
     Mode {
         #[command(subcommand)]
