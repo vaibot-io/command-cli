@@ -55,6 +55,15 @@ pub async fn release(api_url: Option<String>) -> Result<(), CliError> {
     // step-up window is already open, this also succeeds outright.
     match client.release().await {
         ApiResult::Ok { data, .. } => return Ok(report_released(&data)),
+        // An api key cannot lift containment: that is the credential
+        // agent-adjacent code holds, and containment exists to stop a
+        // misbehaving agent. Arming with a key is fine; lifting is not.
+        ApiResult::Err { status: 403, error } if error.contains("session") => {
+            return Err(CliError::Runtime(
+                "Lifting containment needs a signed-in session, not an API key.\n       Run `vaibot login` first, or lift it from the dashboard."
+                    .into(),
+            ))
+        }
         ApiResult::Err { status: 403, error } if error.contains("admin") => {
             return Err(CliError::Runtime(
                 "Lifting containment re-enables every agent on this account, so it takes an administrator.".into(),
