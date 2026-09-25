@@ -2,6 +2,28 @@
 
 All notable changes to the `vaibot` CLI (`command-cli`).
 
+## [0.7.0] — 2026-09-24 — the panic switch
+
+### Added
+- **`vaibot contain [--reason "..."]`** — stop every agent on this account, on
+  every machine, right now. Containment is enforced before policy or classifier
+  runs and holds even in observe mode; guards are pushed to, so it lands in about
+  a second rather than at the next poll.
+- **`vaibot release`** — lift containment. Administrator, plus an emailed code.
+
+Arming and clearing are deliberately asymmetric, and the UX follows. `contain`
+takes no confirmation: hesitating is the expensive mistake in a panic, and a
+false arm is undone in a minute. It is idempotent, so a second pull reports the
+state rather than erroring and keeps the original reason on record. `release`
+attempts the release first and only walks the step-up when a code is genuinely
+needed — so "nothing to lift" never sends an email, and an already-open window
+just works.
+
+These are top-level verbs rather than `vaibot policy contain`: containment is
+not policy, it is the thing that ignores policy.
+
+Requires an API serving `/v2/enforcement/*` (governance-api 2.2.0 or later).
+
 ## [0.6.2] — 2026-07-10 — CLI self-update
 
 ### Added
