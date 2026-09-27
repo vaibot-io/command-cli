@@ -11,19 +11,19 @@ All notable changes to the `vaibot` CLI (`command-cli`).
   a second rather than at the next poll.
 - **`vaibot release`** — lift containment. A signed-in session plus a second
   factor: an emailed code, or `--recovery-code <CODE>`.
-- **`vaibot release --recovery-code <CODE>`** — the break-glass path. A recovery
-  code exists precisely because the emailed factor can be unreachable — a lost or
-  locked inbox while every agent on the account is stopped — so it deliberately
-  routes around that machinery and is checked before any of it runs. Generate a set
-  BEFORE you need one: they cannot be issued while contained.
+- **`vaibot release --recovery-code <CODE>`** — confirm with one of your saved
+  recovery codes instead of an emailed one. This is the way back when you can't
+  reach the inbox the code would go to, so it deliberately routes around the email
+  path entirely and is checked before any of it runs. Generate a set **before** you
+  need one: codes can't be issued while an account is contained.
 
 Arming and clearing are deliberately asymmetric, and the UX follows. `contain`
 takes no confirmation: hesitating is the expensive mistake in a panic, and a
 false arm is undone in a minute. It is idempotent, so a second pull reports the
 state rather than erroring and keeps the original reason on record. `release`
-attempts the release first and only walks the step-up when a code is genuinely
-needed — so "nothing to lift" never sends an email, and an already-open window
-just works.
+tries the release first and only asks for a code when one is genuinely needed — so
+"nothing to lift" never sends an email, and an already-confirmed window just
+works.
 
 Release is **not** gated on the platform superuser flag, deliberately. `admin` in
 this system is platform-wide, not an account role, so requiring it would have

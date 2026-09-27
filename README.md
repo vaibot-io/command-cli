@@ -74,7 +74,7 @@ to the separate daemon; three commands are tracked **stubs** (exit 2).
 | `mode show` | Live control-plane + guard-enforced mode (observe \| enforce). |
 | `mode {enforce, observe}` | Opens the dashboard to switch (email-confirmed there). |
 | `contain [--reason "..."]` | **Stop every agent on this account, on every machine, now.** Enforced before policy or classifier and holds even in observe mode; guards are pushed to, so it lands in about a second. Idempotent — a second pull reports the state and keeps the original reason. Any credential on the account may arm it. |
-| `release [--recovery-code <CODE>]` | Lift containment: a signed-in session **plus** a second factor — an emailed code, or a recovery code. An api key is refused, because that is the credential agent-adjacent code holds. Attempts the release first, so "nothing to lift" never sends an email. |
+| `release [--recovery-code <CODE>]` | Lift containment. You confirm with a code we email you, or one of your saved recovery codes. Needs you signed in — an api key is refused, since that is the credential an agent already holds. Tries the release first, so "nothing to lift" never sends an email. |
 | `mcp connect [host]` / `mcp status` / `mcp disconnect [host]` | Register / show / remove the hosted VAIBot MCP server (`{api_base}/v2/mcp`, api-key bearer) in each agent's native config. Omit host → all detected. |
 | `provenance list [--agent --risk --decision --pending --limit]` | Browse governance receipts (`GET /v2/receipts`). |
 | `provenance show <id>` | Full event chain for a receipt (id or content-hash prefix). |

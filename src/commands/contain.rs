@@ -28,22 +28,22 @@ pub async fn contain(reason: Option<String>, api_url: Option<String>) -> Result<
                     println!("         Reason on record: {r}");
                 }
             } else {
-                println!("\n  [ok]   CONTAINED — every agent on this account is stopped.");
-                println!("         Guards pick this up in about a second; ones that are offline");
-                println!("         pick it up the moment they reconnect.");
+                println!("\n  [ok]   CONTAINED — every agent on this account is stopped, on every machine.");
+                println!("         Guards apply this within about a second. Any that are offline");
+                println!("         apply it the moment they reconnect.");
                 if let Some(r) = data.reason.as_deref() {
                     println!("         Reason: {r}");
                 }
             }
-            println!("\n         Lift it with `vaibot release` — your signed-in session plus an");
-    println!("         emailed code, or `--recovery-code` if you cannot reach that inbox.\n");
+            println!("\n         To lift it, run `vaibot release`. You'll confirm with a code we");
+    println!("         email you — or use `--recovery-code` if you can't reach that inbox.\n");
             Ok(())
         }
         ApiResult::Err { status: 401, .. } => Err(CliError::Runtime(
-            "Not signed in. Run `vaibot login` first — containment needs your account.".into(),
+            "You need to be signed in. Run `vaibot login`, then try again.".into(),
         )),
         ApiResult::Err { error, status } => Err(CliError::Runtime(format!(
-            "Could not contain (HTTP {status}): {error}"
+            "Couldn't apply containment (HTTP {status}): {error}"
         ))),
     }
 }
@@ -74,15 +74,15 @@ pub async fn release(recovery_code: Option<String>, api_url: Option<String>) -> 
                 Ok(())
             }
             ApiResult::Err { status: 403, error } if error.contains("session") => Err(CliError::Runtime(
-                "Lifting containment needs a signed-in session, not an API key.\n       Run `vaibot login` first, or lift it from the dashboard."
+                "Releasing needs you signed in, not an API key.\n       Run `vaibot login`, or release it from the dashboard."
                     .into(),
             )),
             ApiResult::Err { status: 403, error } if error.contains("recovery") => Err(CliError::Runtime(
-                "That recovery code is not valid, or has already been used.\n       Each code works once. Try another from the set you saved."
+                "That recovery code isn't valid, or it's already been used.\n       Each code works once — try another from the set you saved."
                     .into(),
             )),
             ApiResult::Err { error, status } => Err(CliError::Runtime(format!(
-                "Could not release with that recovery code (HTTP {status}): {error}"
+                "Couldn't release with that recovery code (HTTP {status}): {error}"
             ))),
         };
     }
@@ -99,7 +99,7 @@ pub async fn release(recovery_code: Option<String>, api_url: Option<String>) -> 
         // misbehaving agent. Arming with a key is fine; lifting is not.
         ApiResult::Err { status: 403, error } if error.contains("session") => {
             return Err(CliError::Runtime(
-                "Lifting containment needs a signed-in session, not an API key.\n       Run `vaibot login` first, or lift it from the dashboard."
+                "Releasing needs you signed in, not an API key.\n       Run `vaibot login`, or release it from the dashboard."
                     .into(),
             ))
         }
@@ -107,38 +107,42 @@ pub async fn release(recovery_code: Option<String>, api_url: Option<String>) -> 
         ApiResult::Err { status: 403, .. } => {}
         ApiResult::Err { status: 501, .. } => {
             return Err(CliError::Runtime(
-                "Mobile device-key release is not enabled yet. Use the emailed code.".into(),
+                "Confirm with the emailed code instead — run `vaibot release` on its own.".into(),
             ))
         }
         ApiResult::Err { error, status } => {
-            return Err(CliError::Runtime(format!("Could not release (HTTP {status}): {error}")))
+            return Err(CliError::Runtime(format!("Couldn't release (HTTP {status}): {error}")))
         }
     }
 
-    println!("\nVAIBot — release containment (email step-up)\n");
+    println!("\nVAIBot — release containment\n");
     let activate = match client.policy_stepup_activate("containment_release").await {
         ApiResult::Ok { data, .. } => data,
         ApiResult::Err { status: 409, .. } => {
-            println!("  [fail] This needs a claimed email — we email you a code to confirm.");
-            println!("         Claim one first (`vaibot login` or the dashboard), then retry.");
-            return Err(CliError::Runtime("email unclaimed".into()));
+            println!("  [warn] We need an email address on file to send your confirmation code.");
+            println!("         Add one with `vaibot login` or in the dashboard, then run this again.");
+            return Err(CliError::Runtime(
+                "no email on file to send the confirmation code to".into(),
+            ));
         }
         ApiResult::Err { error, status } => {
-            return Err(CliError::Runtime(format!("Step-up failed (HTTP {status}): {error}")))
+            return Err(CliError::Runtime(format!("Couldn't send the confirmation code (HTTP {status}): {error}")))
         }
     };
     let Some(token) = activate.token else {
-        return Err(CliError::Runtime("server did not return a step-up token".into()));
+        return Err(CliError::Runtime(
+            "Couldn't start email confirmation. Try `vaibot release` again in a moment.".into(),
+        ));
     };
     println!(
-        "  ▸ Emailed a confirmation code to {} (expires in ~15 min).",
+        "  ▸ We emailed a confirmation code to {}. It expires in about 15 minutes.",
         activate.sent_to.as_deref().unwrap_or("your email")
     );
 
     let code = prompt_line("  Paste the code: ")?;
     let code = code.trim();
     if code.is_empty() {
-        println!("  No code entered — still contained. Re-run when you have it.");
+        println!("  No code entered. Still contained — run `vaibot release` again when you have it.");
         return Ok(());
     }
 
@@ -146,15 +150,15 @@ pub async fn release(recovery_code: Option<String>, api_url: Option<String>) -> 
         ApiResult::Ok { .. } => {}
         ApiResult::Err { status: 400, .. } => {
             return Err(CliError::Runtime(
-                "Incorrect or expired code — re-run to get a new one.\n       If you cannot reach that inbox, use `vaibot release --recovery-code <CODE>`."
+                "That code didn't match, or it expired. Run `vaibot release` again for a new one.\n       Can't reach that inbox? Use `vaibot release --recovery-code <CODE>`."
                     .into(),
             ))
         }
         ApiResult::Err { status: 429, .. } => {
-            return Err(CliError::Runtime("Too many attempts — wait a moment, then re-run.".into()))
+            return Err(CliError::Runtime("Too many attempts. Wait a minute, then run `vaibot release` again.".into()))
         }
         ApiResult::Err { error, status } => {
-            return Err(CliError::Runtime(format!("Verify failed (HTTP {status}): {error}")))
+            return Err(CliError::Runtime(format!("Couldn't confirm that code (HTTP {status}): {error}")))
         }
     }
 
@@ -165,25 +169,25 @@ pub async fn release(recovery_code: Option<String>, api_url: Option<String>) -> 
                 Ok(())
             }
         ApiResult::Err { error, status } => Err(CliError::Runtime(format!(
-            "Code accepted but the release did not apply (HTTP {status}): {error}"
+            "Your code was accepted, but the release didn't go through (HTTP {status}): {error}.\n       Run `vaibot release` again for a fresh code."
         ))),
     }
 }
 
 fn report_released(data: &crate::api::enforcement::ReleaseResponse) {
     if data.already {
-        println!("\n  [ok]   Nothing to lift — this account is not contained.\n");
+        println!("\n  [ok]   Nothing to lift — this account isn't contained.\n");
         return;
     }
-    println!("\n  [ok]   RELEASED — agents return to your policy.");
+    println!("\n  [ok]   RELEASED — your agents are governed by your policy again.");
     if let Some(f) = data.release_factor.as_deref() {
         println!("         Confirmed by: {f}");
     }
-    println!("         Guards resume in about a second.\n");
+    println!("         Guards pick this up within about a second.\n");
 }
 
 fn blank_recovery_code_message() -> String {
-    "--recovery-code was empty. Pass one of the codes you saved, or drop the flag to use the emailed factor instead."
+    "--recovery-code needs a value. Pass one of the codes you saved, or leave the flag off to confirm by email instead."
         .into()
 }
 
@@ -211,7 +215,7 @@ mod tests {
                 .await
                 .expect_err("a blank code must be refused");
             let msg = err.to_string();
-            assert!(msg.contains("--recovery-code was empty"), "got: {msg}");
+            assert!(msg.contains("--recovery-code needs a value"), "got: {msg}");
         }
     }
 
@@ -221,7 +225,7 @@ mod tests {
         // enough; it has to say what to do instead.
         let m = blank_recovery_code_message();
         assert!(m.contains("codes you saved"), "should point at the saved set: {m}");
-        assert!(m.contains("emailed factor"), "should offer the other path: {m}");
+        assert!(m.contains("confirm by email"), "should offer the other path: {m}");
     }
 
     #[test]

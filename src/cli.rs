@@ -133,10 +133,10 @@ pub enum Command {
         #[arg(long)]
         reason: Option<String>,
     },
-    /// Lift containment (signed-in session + emailed code, or a recovery code).
+    /// Lift containment — confirm with an emailed code, or a saved recovery code.
     Release {
-        /// Use a recovery code instead of the emailed factor. The break-glass
-        /// path for when you cannot reach the inbox the code would go to.
+        /// Confirm with one of your saved recovery codes instead of an emailed
+        /// one. Use this when you can't reach the inbox the code would go to.
         #[arg(long, value_name = "CODE")]
         recovery_code: Option<String>,
     },
