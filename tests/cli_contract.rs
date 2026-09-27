@@ -28,8 +28,10 @@ fn version_matches_crate() {
 }
 
 /// noun ⇒ args. Every entry must exit 2 with the canonical "not yet wired" line.
+// `update` was a stub until 0.6.2 implemented self-update. It is deliberately NOT
+// listed here any more: leaving it in made this test fail on main, and it also made
+// the suite reach out to crates.io on every run.
 const STUBS: &[(&str, &[&str])] = &[
-    ("update", &["update"]),
     ("guard verify", &["guard", "verify"]),
     ("guard provision-offline", &["guard", "provision-offline"]),
     ("provenance anchor", &["provenance", "anchor"]),

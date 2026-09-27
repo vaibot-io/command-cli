@@ -42,6 +42,20 @@ impl ApiClient {
     pub async fn release(&self) -> ApiResult<ReleaseResponse> {
         self.post("/v2/enforcement/release", None).await
     }
+
+    /// Release using a recovery code instead of the emailed factor.
+    ///
+    /// The break-glass path. A recovery code exists precisely because the emailed
+    /// factor can be unreachable — a lost or locked inbox while every agent on the
+    /// account is stopped — so it deliberately depends on none of that machinery.
+    /// The server rejects a code that is invalid or already spent.
+    pub async fn release_with_recovery_code(&self, code: &str) -> ApiResult<ReleaseResponse> {
+        self.post(
+            "/v2/enforcement/release",
+            Some(serde_json::json!({ "recovery_code": code })),
+        )
+        .await
+    }
 }
 
 #[cfg(test)]

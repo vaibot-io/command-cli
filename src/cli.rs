@@ -102,7 +102,7 @@ pub enum Command {
         #[arg(long)]
         fix: bool,
     },
-    /// Update the VAIBot CLI and components (not yet wired).
+    /// Update the VAIBot CLI to the latest released version.
     Update,
 
     // ── component groups ──
@@ -133,8 +133,13 @@ pub enum Command {
         #[arg(long)]
         reason: Option<String>,
     },
-    /// Lift containment (administrator + emailed code).
-    Release,
+    /// Lift containment (signed-in session + emailed code, or a recovery code).
+    Release {
+        /// Use a recovery code instead of the emailed factor. The break-glass
+        /// path for when you cannot reach the inbox the code would go to.
+        #[arg(long, value_name = "CODE")]
+        recovery_code: Option<String>,
+    },
 
     /// View / set the governance mode (observe | enforce).
     Mode {

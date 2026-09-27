@@ -9,7 +9,13 @@ All notable changes to the `vaibot` CLI (`command-cli`).
   every machine, right now. Containment is enforced before policy or classifier
   runs and holds even in observe mode; guards are pushed to, so it lands in about
   a second rather than at the next poll.
-- **`vaibot release`** — lift containment. Administrator, plus an emailed code.
+- **`vaibot release`** — lift containment. A signed-in session plus a second
+  factor: an emailed code, or `--recovery-code <CODE>`.
+- **`vaibot release --recovery-code <CODE>`** — the break-glass path. A recovery
+  code exists precisely because the emailed factor can be unreachable — a lost or
+  locked inbox while every agent on the account is stopped — so it deliberately
+  routes around that machinery and is checked before any of it runs. Generate a set
+  BEFORE you need one: they cannot be issued while contained.
 
 Arming and clearing are deliberately asymmetric, and the UX follows. `contain`
 takes no confirmation: hesitating is the expensive mistake in a panic, and a
@@ -18,6 +24,12 @@ state rather than erroring and keeps the original reason on record. `release`
 attempts the release first and only walks the step-up when a code is genuinely
 needed — so "nothing to lift" never sends an email, and an already-open window
 just works.
+
+Release is **not** gated on the platform superuser flag, deliberately. `admin` in
+this system is platform-wide, not an account role, so requiring it would have
+guaranteed a lockout: any account could arm containment and then never lift it. The
+asymmetry is carried by the two things that do matter — a session rather than an api
+key, plus a second factor.
 
 These are top-level verbs rather than `vaibot policy contain`: containment is
 not policy, it is the thing that ignores policy.
