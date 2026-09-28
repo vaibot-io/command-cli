@@ -44,7 +44,7 @@ admins via `--api-url` (or `VAIBOT_GOVERNANCE_URL` with the deliberate-act flag)
 ## Command surface
 
 Everything below is **wired (REAL)** unless flagged. `serve` commands **shell out**
-to the separate daemon; four commands are tracked **stubs** (exit 2).
+to the separate daemon; three commands are tracked **stubs** (exit 2).
 
 | Command | Notes |
 |---|---|
@@ -55,7 +55,7 @@ to the separate daemon; four commands are tracked **stubs** (exit 2).
 | `init [-y] [--env] [--api-key] [--skip-login] [--with-mcp] [--preset]` | Log in → install the guard → detect + wire agents → set a governance floor. `--with-mcp` registers the MCP server with every detected agent; `--preset permissive\|balanced\|strict`. `--with-gateway` = *stub*. |
 | `status [--json]` | Joined `GET /v2/health` + `/v2/accounts/me` (auth, health, quota). |
 | `doctor [--fix]` | Read-only stack checks. (`--fix` remediation = *stub*.) |
-| `update` | *stub* |
+| `update` | Self-update to the latest released CLI (verifies the installer and prints its SHA-256). Opt out of the background check with `VAIBOT_NO_UPDATE_CHECK=1`. |
 | `guard install` | `npm i -g @vaibot/guard@^2.0.0` + env file + systemd unit. |
 | `guard serve` | *shell-out* to the guard binary. |
 | `guard {status, restart, stop, logs, policy}` | systemd control + `/health` + `/v1/policy`. |
@@ -73,6 +73,8 @@ to the separate daemon; four commands are tracked **stubs** (exit 2).
 | `policy {pull, diff, revoke}` | Transitional YAML working-copy + coarse rollback. |
 | `mode show` | Live control-plane + guard-enforced mode (observe \| enforce). |
 | `mode {enforce, observe}` | Opens the dashboard to switch (email-confirmed there). |
+| `contain [--reason "..."]` | **Stop every agent on this account, on every machine, now.** Enforced before policy or classifier and holds even in observe mode; guards are pushed to, so it lands in about a second. Idempotent — a second pull reports the state and keeps the original reason. Any credential on the account may arm it. |
+| `release [--recovery-code <CODE>]` | Lift containment. You confirm with a code we email you, or one of your saved recovery codes. Needs you signed in — an api key is refused, since that is the credential an agent already holds. Tries the release first, so "nothing to lift" never sends an email. |
 | `mcp connect [host]` / `mcp status` / `mcp disconnect [host]` | Register / show / remove the hosted VAIBot MCP server (`{api_base}/v2/mcp`, api-key bearer) in each agent's native config. Omit host → all detected. |
 | `provenance list [--agent --risk --decision --pending --limit]` | Browse governance receipts (`GET /v2/receipts`). |
 | `provenance show <id>` | Full event chain for a receipt (id or content-hash prefix). |

@@ -102,7 +102,7 @@ pub enum Command {
         #[arg(long)]
         fix: bool,
     },
-    /// Update the VAIBot CLI and components (not yet wired).
+    /// Update the VAIBot CLI to the latest released version.
     Update,
 
     // ── component groups ──
@@ -126,6 +126,21 @@ pub enum Command {
         #[command(subcommand)]
         cmd: PolicyCmd,
     },
+    // ── containment ──
+    /// Stop every agent on this account, everywhere, right now.
+    Contain {
+        /// Why — recorded on the receipt and shown in the dashboard banner.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Lift containment — confirm with an emailed code, or a saved recovery code.
+    Release {
+        /// Confirm with one of your saved recovery codes instead of an emailed
+        /// one. Use this when you can't reach the inbox the code would go to.
+        #[arg(long, value_name = "CODE")]
+        recovery_code: Option<String>,
+    },
+
     /// View / set the governance mode (observe | enforce).
     Mode {
         #[command(subcommand)]

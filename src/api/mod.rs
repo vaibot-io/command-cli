@@ -8,6 +8,7 @@
 //! command handlers that call these methods.
 
 pub mod account;
+pub mod enforcement;
 pub mod policy;
 pub mod provenance;
 

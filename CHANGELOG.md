@@ -2,6 +2,40 @@
 
 All notable changes to the `vaibot` CLI (`command-cli`).
 
+## [0.7.0] — 2026-09-24 — the panic switch
+
+### Added
+- **`vaibot contain [--reason "..."]`** — stop every agent on this account, on
+  every machine, right now. Containment is enforced before policy or classifier
+  runs and holds even in observe mode; guards are pushed to, so it lands in about
+  a second rather than at the next poll.
+- **`vaibot release`** — lift containment. A signed-in session plus a second
+  factor: an emailed code, or `--recovery-code <CODE>`.
+- **`vaibot release --recovery-code <CODE>`** — confirm with one of your saved
+  recovery codes instead of an emailed one. This is the way back when you can't
+  reach the inbox the code would go to, so it deliberately routes around the email
+  path entirely and is checked before any of it runs. Generate a set **before** you
+  need one: codes can't be issued while an account is contained.
+
+Arming and clearing are deliberately asymmetric, and the UX follows. `contain`
+takes no confirmation: hesitating is the expensive mistake in a panic, and a
+false arm is undone in a minute. It is idempotent, so a second pull reports the
+state rather than erroring and keeps the original reason on record. `release`
+tries the release first and only asks for a code when one is genuinely needed — so
+"nothing to lift" never sends an email, and an already-confirmed window just
+works.
+
+Release is **not** gated on the platform superuser flag, deliberately. `admin` in
+this system is platform-wide, not an account role, so requiring it would have
+guaranteed a lockout: any account could arm containment and then never lift it. The
+asymmetry is carried by the two things that do matter — a session rather than an api
+key, plus a second factor.
+
+These are top-level verbs rather than `vaibot policy contain`: containment is
+not policy, it is the thing that ignores policy.
+
+Requires an API serving `/v2/enforcement/*` (governance-api 2.2.0 or later).
+
 ## [0.6.2] — 2026-07-10 — CLI self-update
 
 ### Added
