@@ -22,7 +22,7 @@ use super::{current_env, setup};
 pub enum PluginCmd {
     /// Install a host's circuit-breaker plugin (and ensure the shared guard).
     Add {
-        /// Target host: claudecode | codex | openclaw | cursor.
+        /// Target host: claudecode | codex | openclaw | cursor | hermes.
         #[arg(default_value = "openclaw")]
         host: String,
         /// Skip ensuring the shared guard.
@@ -40,7 +40,7 @@ pub enum PluginCmd {
     },
     /// Uninstall a VAIBot host integration (the circuit-breaker plugin).
     Remove {
-        /// Target host: claudecode | codex | openclaw | cursor.
+        /// Target host: claudecode | codex | openclaw | cursor | hermes.
         #[arg(default_value = "openclaw")]
         host: String,
         /// Also uninstall the SHARED guard (npm + systemd). Off by default —
@@ -50,7 +50,7 @@ pub enum PluginCmd {
     },
     /// Upgrade a VAIBot host integration (guard + circuit-breaker plugin).
     Update {
-        /// Target host: claudecode | codex | openclaw | cursor.
+        /// Target host: claudecode | codex | openclaw | cursor | hermes.
         #[arg(default_value = "openclaw")]
         host: String,
         /// Skip updating the shared guard.
@@ -137,6 +137,9 @@ pub fn install_host_plugin(h: Host) -> Result<(), CliError> {
     if matches!(h, Host::Cursor) {
         return install_cursor();
     }
+    if matches!(h, Host::Hermes) {
+        return install_hermes();
+    }
     require_cli(h)?;
     for &(label, cmd) in h.install_steps() {
         run_narrated(label, cmd);
@@ -144,6 +147,95 @@ pub fn install_host_plugin(h: Host) -> Result<(), CliError> {
     verify_after(h, true)?;
     if let Some(step) = h.manual_enable() {
         println!("\nFinish enabling in {}:\n  {}", h.label(), step);
+    }
+    Ok(())
+}
+
+// ── Hermes: place the published wheel, then enable ───────────────────────────
+//
+// Hermes has a plugin CLI, but only for enabling — the files have to arrive first, and
+// the plugin is Python. Rather than shell out to pip (which fails outright on
+// PEP 668 systems and picks whichever interpreter is on PATH), or reimplement
+// fetch-and-verify here, this delegates to the published npm installer:
+//
+//   npx @vaibot/hermes-circuitbreaker-plugin install
+//
+// That installer fetches the wheel from PyPI and verifies it against a SHA-256 pinned
+// at its own publish time. Delegating keeps ONE implementation of that check, the same
+// reason the breakers call the guard's `classify` instead of growing a second
+// classifier.
+//
+// Unlike the other hosts this does NOT use the best-effort `install_steps` loop: a
+// digest mismatch has to be able to fail the whole operation, and that loop only warns.
+
+fn install_hermes() -> Result<(), CliError> {
+    require_cli(Host::Hermes)?;
+    require_npx()?;
+
+    let dir = installer::hermes_plugin_dir();
+    println!("[step] Installing the Hermes plugin → {}", dir.display());
+    println!(
+        "       via npx @vaibot/hermes-circuitbreaker-plugin (fetches the published\n\
+         \x20      wheel from PyPI and verifies its digest)"
+    );
+
+    // --force so a re-run replaces an existing install rather than refusing; the
+    // installer keeps the previous copy as a .bak either way.
+    if !installer::run_step("npx --yes @vaibot/hermes-circuitbreaker-plugin install --force") {
+        println!(
+            "[fail] Could not install the Hermes plugin.\n\
+             \x20      The installer verifies the wheel against a pinned digest and refuses on a\n\
+             \x20      mismatch, so this is either a network problem or something to look at. Run it\n\
+             \x20      directly to see why:\n\
+             \x20        npx @vaibot/hermes-circuitbreaker-plugin install --dry-run"
+        );
+        return Err(CliError::Runtime("hermes plugin install failed".into()));
+    }
+    println!("[ok]   Plugin files installed.");
+
+    run_narrated("Enabling the plugin", "hermes plugins enable vaibot");
+    verify_after(Host::Hermes, true)?;
+
+    println!(
+        "\nThe guard ships inside the plugin, so there is nothing else to install — it needs\n\
+         Node on PATH to run. Inside Hermes, `/vaibot status` shows which guard answered.\n\
+         `vaibot plugin update hermes` re-fetches and re-verifies the wheel."
+    );
+    Ok(())
+}
+
+fn remove_hermes(with_guard: bool) -> Result<(), CliError> {
+    // Disable first so Hermes stops loading it, then remove the files — `plugins
+    // disable` leaves the directory in place, so only doing one of the two would leave
+    // a plugin that comes back on the next enable.
+    run_narrated("Disabling the plugin", Host::Hermes.remove_cmd());
+
+    let dir = installer::hermes_plugin_dir();
+    println!("[step] Removing {}...", dir.display());
+    if installer::remove_hermes_plugin() {
+        println!("[ok]   Removed.");
+    } else {
+        println!("[warn] Could not remove {} — delete it manually.", dir.display());
+    }
+
+    if with_guard {
+        remove_guard();
+    } else {
+        println!("\nLeft the shared guard in place — other hosts may use it. Pass --with-guard to remove it too.");
+    }
+    println!("\n[ok]   Hermes plugin remove complete.");
+    Ok(())
+}
+
+/// `npx` ships with npm, which this CLI already requires for the guard — but say so
+/// plainly rather than letting the install fail with a shell error.
+fn require_npx() -> Result<(), CliError> {
+    if which("npx").is_none() {
+        println!(
+            "[fail] `npx` not found on PATH. It ships with Node/npm, which the plugin needs anyway\n\
+             \x20      (the guard is a Node program). Install Node, then re-run."
+        );
+        return Err(CliError::Runtime("npx not found".into()));
     }
     Ok(())
 }
@@ -217,6 +309,9 @@ fn remove(host: String, with_guard: bool) -> Result<(), CliError> {
     if matches!(h, Host::Cursor) {
         return remove_cursor(with_guard);
     }
+    if matches!(h, Host::Hermes) {
+        return remove_hermes(with_guard);
+    }
     require_cli(h)?;
 
     let cmd = h.remove_cmd();
@@ -244,6 +339,11 @@ fn update(host: String, skip_guard: bool) -> Result<(), CliError> {
         return update_cursor(skip_guard);
     }
     require_cli(h)?;
+    // Hermes' update step IS the npx installer, so say why it cannot run rather than
+    // letting the generic loop report an opaque "Updating plugin failed".
+    if matches!(h, Host::Hermes) {
+        require_npx()?;
+    }
 
     if !skip_guard {
         update_guard();
@@ -261,7 +361,7 @@ fn update(host: String, skip_guard: bool) -> Result<(), CliError> {
 
 fn parse_host(host: &str) -> Result<Host, CliError> {
     Host::parse(host).ok_or_else(|| {
-        println!("[fail] Unknown host \"{host}\". Use one of: claudecode | codex | openclaw | cursor.");
+        println!("[fail] Unknown host \"{host}\". Use one of: claudecode | codex | openclaw | cursor | hermes.");
         CliError::Runtime(format!("unknown host: {host}"))
     })
 }

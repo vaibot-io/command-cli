@@ -188,6 +188,31 @@ pub fn restart_systemd_service() -> bool {
 /// Published Cursor plugin repo (public → HTTPS clone needs no auth).
 const CURSOR_PLUGIN_REPO: &str = "https://github.com/vaibot-io/cursor-circuitbreaker-plugin.git";
 
+/// `~/.hermes/plugins/vaibot` — where Hermes discovers the plugin.
+///
+/// The files are put there by the published npm installer, not by this CLI: it
+/// fetches the wheel from PyPI and verifies it against a digest pinned at publish
+/// time. Reimplementing that check here would be a second implementation of a
+/// security-relevant verification, which is exactly what the breakers refuse to do
+/// with the guard's classifier.
+pub fn hermes_plugin_dir() -> PathBuf {
+    BaseDirs::new()
+        .map(|b| b.home_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".hermes")
+        .join("plugins")
+        .join("vaibot")
+}
+
+/// Remove the Hermes plugin directory. `hermes plugins disable` only flips a flag.
+pub fn remove_hermes_plugin() -> bool {
+    let dir = hermes_plugin_dir();
+    if !dir.exists() {
+        return true;
+    }
+    std::fs::remove_dir_all(&dir).is_ok()
+}
+
 /// `~/.cursor/plugins/local/vaibot-cursor` — where Cursor loads the local plugin.
 pub fn cursor_local_dir() -> PathBuf {
     BaseDirs::new()
