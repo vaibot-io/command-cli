@@ -550,6 +550,74 @@ impl PluginState {
     }
 }
 
+/// Build the `--json` document.
+///
+/// Pure on purpose: the shape is the part with consumers, so it is unit-testable
+/// without interrogating a single host.
+///
+/// ## Two host maps, deliberately
+///
+/// `allHosts` is the real one — every host the CLI supports, each an object keyed by
+/// the word `plugin add` accepts.
+///
+/// `hosts` is a **compatibility shim, frozen at the shape 0.6.2 published**. It cannot
+/// simply be widened, because `hosts.codex` and `hosts.claudeCode` ship as bare
+/// booleans there and an object in their place is a type error for anything reading
+/// them — so the three keys, their types and their nesting stay exactly as they were,
+/// `guardSkill` included, sitting inside `openclaw` where it never belonged. New
+/// consumers should read `allHosts`; `hosts` is additive-only and goes away in the next
+/// major.
+///
+/// Both are derived from the same `rows`, not from a second set of `which()` calls.
+/// Every one of these surfaces fell behind precisely because it kept its own private
+/// copy of "which hosts exist".
+fn list_report(
+    rows: &[(Host, bool, PluginState)],
+    guard_skill: bool,
+    guard_service: &str,
+) -> serde_json::Value {
+    let all_hosts: serde_json::Map<String, serde_json::Value> = rows
+        .iter()
+        .map(|(h, present, state)| {
+            (
+                h.key().to_string(),
+                serde_json::json!({ "present": present, "plugin": state.json() }),
+            )
+        })
+        .collect();
+
+    // (present, plugin confirmed installed) for one host, or (false, false) if absent
+    // from rows — which cannot happen while rows is built from Host::ALL, but returning
+    // a value beats an unwrap on a JSON path.
+    let find = |want: Host| {
+        rows.iter()
+            .find(|(h, _, _)| *h == want)
+            .map(|(_, present, state)| (*present, matches!(state, PluginState::Installed)))
+            .unwrap_or((false, false))
+    };
+    let (openclaw_present, openclaw_installed) = find(Host::Openclaw);
+    let (claude_present, _) = find(Host::Claudecode);
+    let (codex_present, _) = find(Host::Codex);
+
+    serde_json::json!({
+        "guardSkill": guard_skill,
+        "guardService": guard_service,
+        "allHosts": all_hosts,
+        // Frozen — see above. 0.6.2 computed circuitBreaker as
+        // `openclaw_present && <openclaw plugins list contains "circuit-breaker">`,
+        // which is what (present, Installed) means for that host.
+        "hosts": {
+            "openclaw": {
+                "present": openclaw_present,
+                "guardSkill": guard_skill,
+                "circuitBreaker": openclaw_present && openclaw_installed,
+            },
+            "claudeCode": claude_present,
+            "codex": codex_present,
+        },
+    })
+}
+
 fn list(json: bool) -> Result<(), CliError> {
     let guard_skill = installer::guard_skill_exists();
     let guard_service = if is_active_systemd_unit("vaibot-guard") {
@@ -581,20 +649,7 @@ fn list(json: bool) -> Result<(), CliError> {
         .collect();
 
     if json {
-        let hosts: serde_json::Map<String, serde_json::Value> = rows
-            .iter()
-            .map(|(h, present, state)| {
-                (
-                    h.key().to_string(),
-                    serde_json::json!({ "present": present, "plugin": state.json() }),
-                )
-            })
-            .collect();
-        let report = serde_json::json!({
-            "guardSkill": guard_skill,
-            "guardService": guard_service,
-            "hosts": hosts,
-        });
+        let report = list_report(&rows, guard_skill, guard_service);
         println!("{}", serde_json::to_string_pretty(&report).unwrap());
         return Ok(());
     }
@@ -628,5 +683,108 @@ fn yes_no(b: bool) -> &'static str {
         "installed"
     } else {
         "no"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every host, as `list()` would build them for a machine with everything present
+    /// and openclaw's plugin confirmed installed.
+    fn rows_all_present() -> Vec<(Host, bool, PluginState)> {
+        Host::ALL
+            .into_iter()
+            .map(|h| {
+                let state = match h {
+                    Host::Openclaw | Host::Claudecode | Host::Hermes => PluginState::Installed,
+                    // No scriptable check on these two.
+                    Host::Codex | Host::Cursor => PluginState::Unknown,
+                };
+                (h, true, state)
+            })
+            .collect()
+    }
+
+    /// The shim's whole purpose: a consumer written against 0.6.2 must keep working
+    /// unchanged. This pins the three legacy keys, their TYPES and their nesting.
+    ///
+    /// The types are the point — `claudeCode` and `codex` ship as bare booleans, which
+    /// is why `hosts` could not simply be widened to carry five hosts.
+    #[test]
+    fn hosts_stays_frozen_at_the_0_6_2_shape() {
+        let report = list_report(&rows_all_present(), true, "active");
+        let hosts = report.get("hosts").expect("hosts present");
+
+        // Exactly the three keys 0.6.2 published — no more, no fewer.
+        let keys: std::collections::BTreeSet<&str> =
+            hosts.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        let expected: std::collections::BTreeSet<&str> =
+            ["openclaw", "claudeCode", "codex"].into_iter().collect();
+        assert_eq!(keys, expected, "the frozen `hosts` map gained or lost a key");
+
+        // Bare booleans, not objects.
+        assert_eq!(hosts["claudeCode"], serde_json::json!(true));
+        assert_eq!(hosts["codex"], serde_json::json!(true));
+
+        // openclaw keeps its object, guardSkill nested inside it.
+        assert_eq!(
+            hosts["openclaw"],
+            serde_json::json!({ "present": true, "guardSkill": true, "circuitBreaker": true })
+        );
+
+        // guardService stayed top-level in 0.6.2 and must remain there.
+        assert_eq!(report["guardService"], serde_json::json!("active"));
+    }
+
+    /// 0.6.2 computed `circuitBreaker` as openclaw-present AND the plugin confirmed, so
+    /// an openclaw that is present but has no plugin reports false, not true.
+    #[test]
+    fn legacy_circuit_breaker_is_false_when_the_plugin_is_absent() {
+        let rows: Vec<(Host, bool, PluginState)> = vec![
+            (Host::Openclaw, true, PluginState::NotInstalled),
+            (Host::Claudecode, false, PluginState::Unknown),
+            (Host::Codex, false, PluginState::Unknown),
+        ];
+        let report = list_report(&rows, true, "unknown");
+        assert_eq!(report["hosts"]["openclaw"]["circuitBreaker"], serde_json::json!(false));
+        assert_eq!(report["hosts"]["openclaw"]["present"], serde_json::json!(true));
+        // An absent host reports false rather than being omitted.
+        assert_eq!(report["hosts"]["claudeCode"], serde_json::json!(false));
+    }
+
+    /// The new map is the one that carries every host — including the two the old shape
+    /// could not express at all.
+    #[test]
+    fn all_hosts_covers_every_supported_host() {
+        let report = list_report(&rows_all_present(), true, "active");
+        let all = report["allHosts"].as_object().expect("allHosts is an object");
+
+        assert_eq!(all.len(), Host::ALL.len(), "allHosts must cover Host::ALL");
+        for h in Host::ALL {
+            let entry = all
+                .get(h.key())
+                .unwrap_or_else(|| panic!("{} missing from allHosts", h.key()));
+            assert!(entry.get("present").is_some(), "{} has no `present`", h.key());
+            assert!(entry.get("plugin").is_some(), "{} has no `plugin`", h.key());
+        }
+
+        // The two hosts the frozen shape cannot represent.
+        assert_eq!(all["hermes"]["plugin"], serde_json::json!("installed"));
+        assert_eq!(all["cursor"]["plugin"], serde_json::json!("unknown"));
+    }
+
+    /// "Unknown" must never be reported as "not installed" — codex and cursor expose no
+    /// check, and inventing a negative answer would send someone chasing a non-problem.
+    #[test]
+    fn unknown_is_not_reported_as_not_installed() {
+        let report = list_report(&rows_all_present(), true, "active");
+        for key in ["codex", "cursor"] {
+            assert_eq!(
+                report["allHosts"][key]["plugin"],
+                serde_json::json!("unknown"),
+                "{key} must report unknown, not a made-up answer"
+            );
+        }
     }
 }

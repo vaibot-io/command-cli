@@ -59,24 +59,39 @@ behind — two of them by **two** hosts, since Cursor was missing as well:
 - **`vaibot doctor` checked three host CLIs**, missing cursor and hermes. Now driven off
   `Host::ALL`.
 
-**Breaking — `plugin list --json` shape.** The old shape could not represent five hosts
-coherently: `openclaw` was an object while `claudeCode` and `codex` were bare booleans,
-and the global `guardSkill` was nested inside `openclaw`. Every host is now an object
-under its `plugin add` key, and the two global facts sit at the top level:
+**`plugin list --json` gains `allHosts`; the old `hosts` is unchanged.** Not a breaking
+change — a consumer written against 0.6.2 keeps working with no edit.
+
+The 0.6.2 shape could not be widened to five hosts, because `hosts.claudeCode` and
+`hosts.codex` ship there as **bare booleans**; putting an object in their place is a type
+error for anything reading them. So `hosts` is frozen exactly as it shipped — three keys,
+same types, same nesting, `guardSkill` included, still sitting inside `openclaw` where it
+never belonged — and the real data arrives alongside it under `allHosts`:
 
 ```json
 {
   "guardSkill": true,
   "guardService": "active",
-  "hosts": {
+  "allHosts": {
     "claudecode": { "present": true, "plugin": "installed" },
     "codex":      { "present": true, "plugin": "unknown" },
+    "openclaw":   { "present": true, "plugin": "installed" },
+    "cursor":     { "present": true, "plugin": "unknown" },
     "hermes":     { "present": true, "plugin": "installed" }
-  }
+  },
+  "hosts": { "openclaw": { "present": true, "guardSkill": true, "circuitBreaker": true },
+             "claudeCode": true, "codex": true }
 }
 ```
 
-Note `claudeCode` → `claudecode`: keys are now the exact word `plugin add` accepts.
+`allHosts` keys are the exact word `plugin add` accepts. `plugin` is `installed`,
+`not-installed`, or `unknown` — the last meaning the host exposes no scriptable check,
+which is deliberately not the same claim as "not installed".
+
+**Read `allHosts` in new code.** `hosts` is additive-only and goes away in the next
+major. Both are derived from one pass over `Host::ALL`, not from two sets of `which()`
+calls — keeping a private copy of "which hosts exist" is exactly what let these surfaces
+fall two hosts behind.
 
 ### Internal
 - `installer::verify_plugin()` removed — it was byte-for-byte the same check as
