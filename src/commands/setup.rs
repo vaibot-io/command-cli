@@ -592,6 +592,68 @@ fn present(b: bool) -> &'static str {
 /// Runs inside the caller's existing tokio runtime (dispatch is already async);
 /// creating a nested runtime here would panic with "Cannot start a runtime from
 /// within a runtime".
+/// `vaibot update` — update the whole installation.
+///
+/// Order is deliberate: the guard and the plugins first, the CLI last. Self-update
+/// replaces the running binary, so anything after it would be running code that has
+/// just been overwritten.
+///
+/// `--cli-only` is what this command did before this release, kept because someone may
+/// have scripted it.
+pub async fn update_all(
+    cli_only: bool,
+    skip_guard: bool,
+    skip_plugins: bool,
+    skip_cli: bool,
+) -> Result<(), CliError> {
+    if cli_only {
+        return update().await;
+    }
+
+    println!("\nVAIBot — updating everything installed\n");
+
+    let mut failures = 0usize;
+    if skip_plugins {
+        // Guard only. This calls the guard command directly rather than going through
+        // update_everything_installed, which would update the plugins --skip-plugins
+        // just asked it not to.
+        if !skip_guard {
+            println!("── Guard ──");
+            if let Err(e) = crate::commands::guard::update() {
+                println!("[warn] Guard update failed: {e}");
+                failures += 1;
+            }
+        }
+    } else {
+        let (attempted, failed) = crate::commands::plugin::update_everything_installed(skip_guard);
+        failures = failed;
+        if attempted == 0 {
+            println!("No host plugins to update.");
+        }
+    }
+
+    if !skip_cli {
+        println!("── CLI ──");
+        // Last, because it overwrites this binary. A failure here does not undo the
+        // plugin work above, so it is reported rather than allowed to mask it.
+        if let Err(e) = update().await {
+            println!("[warn] CLI update failed: {e}");
+            println!("       The guard and plugins above were still updated.");
+            return Err(e);
+        }
+    }
+
+    println!();
+    if failures == 0 {
+        println!("[ok]   Update complete.");
+        Ok(())
+    } else {
+        // Honest exit code: something the person asked for did not happen.
+        println!("[warn] Update finished with {failures} failure(s) — see above.");
+        Err(CliError::Runtime(format!("{failures} update(s) failed")))
+    }
+}
+
 pub async fn update() -> Result<(), CliError> {
     let non_interactive = std::env::var("VAIBOT_NON_INTERACTIVE").is_ok();
     let current = env!("CARGO_PKG_VERSION");

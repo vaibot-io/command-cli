@@ -335,6 +335,13 @@ fn remove(host: String, with_guard: bool) -> Result<(), CliError> {
 
 fn update(host: String, skip_guard: bool) -> Result<(), CliError> {
     let h = parse_host(&host)?;
+    update_host_plugin(h, skip_guard)
+}
+
+/// Update one host's plugin. Split out of `update` so `vaibot update` can drive every
+/// host without re-parsing a string, and can update the shared guard ONCE rather than
+/// once per host.
+pub fn update_host_plugin(h: Host, skip_guard: bool) -> Result<(), CliError> {
     if matches!(h, Host::Cursor) {
         return update_cursor(skip_guard);
     }
@@ -432,18 +439,80 @@ fn ensure_guard() -> Result<(), CliError> {
     }
 }
 
-fn update_guard() {
-    println!("[step] Updating the guard (npm)...");
-    if installer::install_guard_skill() {
-        println!("[ok]   Guard updated (npm i -g {})", installer::GUARD_NPM_SPEC);
-    } else {
-        println!("[warn] Could not update the guard — try: npm install -g {}", installer::GUARD_NPM_SPEC);
+/// What `vaibot update` calls: the guard once, then every plugin that is actually
+/// installed.
+///
+/// "Installed" is decided per host rather than assumed:
+///
+/// * Host CLI absent — the host is not on this machine; skip silently, because reporting
+///   a failure for software the person never installed is noise, not information.
+/// * Plugin verifiably absent — say so and name the command that installs it. Updating
+///   something that is not there would otherwise look like it had worked.
+/// * Unverifiable (codex, cursor) — attempt it, and say that the result could not be
+///   confirmed. Better to try and be honest than to skip a host because its CLI has no
+///   way to ask.
+///
+/// Returns (attempted, failed) so the caller can set an exit code without this function
+/// deciding what an overall failure means.
+pub fn update_everything_installed(skip_guard: bool) -> (usize, usize) {
+    let mut guard_failed = false;
+    if !skip_guard {
+        // Unlike `plugin update <host>`, a whole-stack update reports a guard failure:
+        // the person asked for the guard specifically, so silently warning would make
+        // the command claim more than it did.
+        if let Err(e) = crate::commands::guard::update() {
+            guard_failed = true;
+            println!("[warn] Guard update failed: {e}");
+        }
+        println!();
     }
-    println!("[step] Restarting guard service...");
-    if installer::restart_systemd_service() {
-        println!("[ok]   vaibot-guard.service restarted");
-    } else {
-        println!("[warn] Could not restart the guard service (may not be systemd-managed).");
+
+    let mut attempted = 0usize;
+    let mut failed = 0usize;
+    let mut absent: Vec<&'static str> = Vec::new();
+    let mut not_installed: Vec<&'static str> = Vec::new();
+
+    for h in Host::ALL {
+        if !h.cli_present() {
+            absent.push(h.label());
+            continue;
+        }
+        if h.verify_installed() == Some(false) {
+            not_installed.push(h.key());
+            continue;
+        }
+        println!("── {} ──", h.label());
+        attempted += 1;
+        // skip_guard: true — the guard was handled once above, and updating it per host
+        // would restart the daemon four times over.
+        if let Err(e) = update_host_plugin(h, true) {
+            failed += 1;
+            println!("[warn] {} did not update: {e}", h.label());
+        }
+        println!();
+    }
+
+    if !absent.is_empty() {
+        println!("Not on this machine, so nothing to update: {}", absent.join(", "));
+    }
+    for key in &not_installed {
+        println!("Host present but the plugin is not installed — `vaibot plugin add {key}`");
+    }
+    if guard_failed {
+        failed += 1;
+    }
+    (attempted, failed)
+}
+
+/// The guard half of `plugin add/update <host>`.
+///
+/// One implementation of "update the guard" lives in commands::guard; this is the
+/// call site that treats a failure as a WARNING rather than an error, because the
+/// person asked to update a host's plugin and a stale-but-working shared guard should
+/// not fail that. `vaibot guard update` and `vaibot update` take the error.
+fn update_guard() {
+    if let Err(e) = crate::commands::guard::update() {
+        println!("[warn] The plugin update continues despite this: {e}");
     }
 }
 

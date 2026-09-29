@@ -36,7 +36,7 @@ fn is_env_gate_exempt(cmd: &Command) -> bool {
             | Command::Init { .. }
             | Command::Status { .. }
             | Command::Doctor { .. }
-            | Command::Update
+            | Command::Update { .. }
     )
 }
 
@@ -53,7 +53,7 @@ pub async fn dispatch(cli: Cli) -> Result<(), CliError> {
     // Auto-update check (non-blocking, skip if VAIBOT_NO_UPDATE_CHECK is set or update command).
     // check_and_notify_update owns its own time budget (and cache fallback), so no
     // outer timeout is layered here.
-    if !matches!(cli.command, Command::Update) && std::env::var("VAIBOT_NO_UPDATE_CHECK").is_err() {
+    if !matches!(cli.command, Command::Update { .. }) && std::env::var("VAIBOT_NO_UPDATE_CHECK").is_err() {
         if let Some(latest) = services::updater::check_and_notify_update().await {
             services::updater::show_update_notification(&latest);
         }
@@ -90,7 +90,12 @@ pub async fn dispatch(cli: Cli) -> Result<(), CliError> {
         }
         Command::Status { json } => commands::status::run(json, api_url).await,
         Command::Doctor { fix } => commands::setup::doctor(fix).await,
-        Command::Update => commands::setup::update().await,
+        Command::Update {
+            cli_only,
+            skip_guard,
+            skip_plugins,
+            skip_cli,
+        } => commands::setup::update_all(cli_only, skip_guard, skip_plugins, skip_cli).await,
 
         // ── component groups ──
         Command::Guard { cmd } => commands::guard::dispatch(cmd).await,

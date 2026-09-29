@@ -2,7 +2,43 @@
 
 All notable changes to the `vaibot` CLI (`command-cli`).
 
-## [0.7.0] — 2026-09-28 — the panic switch, and Hermes
+## [0.7.0] — 2026-09-28 — the panic switch, Hermes, and updating in place
+
+### Added — updating what you already have
+- **`vaibot update` now updates the whole installation**, not just the CLI: the shared
+  guard, every installed host circuit-breaker, then the CLI.
+
+  The CLI goes **last** on purpose — a self-update replaces the running binary, so
+  anything sequenced after it would be running code that had just been overwritten.
+
+  `update` joins `init` and `doctor` as a whole-stack lifecycle verb, which is the
+  pattern this CLI already established: those two do not ask you which component you
+  meant either. Component-scoped work stays in its component's group.
+
+  Flags: `--cli-only` (the previous behaviour, kept because it may have been scripted),
+  and `--skip-guard` / `--skip-plugins` / `--skip-cli`. `--cli-only` conflicts with all
+  three, refused at parse time rather than part-way through reinstalling things.
+
+  Exit code is honest: if a plugin or the guard fails to update, the command reports it
+  and exits non-zero rather than printing "complete".
+
+- **`vaibot guard update`** — the guard alone, then a restart.
+
+  Until now the only way to update the guard was as a side effect of
+  `vaibot plugin update <host>`, which bundles "guard + that host's plugin". That
+  bundling is deliberate and **unchanged** — someone coming back after a while wants
+  both refreshed. But the guard is shared across every host, so the one component every
+  install has had no command of its own, in the one group where you would look for it.
+
+  A failed restart warns rather than failing: a guard running an older build is still
+  governing, and the new version takes effect the next time it starts.
+
+### Internal
+- One implementation of "update the guard", in `commands::guard::update`. The plugin
+  path calls it and downgrades a failure to a warning — updating a host's plugin should
+  not fail because a shared, still-working guard is stale — while `vaibot update` and
+  `vaibot guard update` take the error. Two failure policies, one code path.
+
 
 ### Added — Hermes support
 - **`vaibot plugin add hermes`** — the fifth host. Hermes has a plugin CLI, but only

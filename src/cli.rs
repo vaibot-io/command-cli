@@ -102,8 +102,22 @@ pub enum Command {
         #[arg(long)]
         fix: bool,
     },
-    /// Update the VAIBot CLI to the latest released version.
-    Update,
+    /// Update everything installed: the guard, every host's circuit-breaker
+    /// plugin, and the CLI itself.
+    Update {
+        /// Only update the CLI — what `vaibot update` did before this release.
+        #[arg(long = "cli-only", conflicts_with_all = ["skip_cli", "skip_guard", "skip_plugins"])]
+        cli_only: bool,
+        /// Leave the shared guard alone.
+        #[arg(long = "skip-guard")]
+        skip_guard: bool,
+        /// Leave the host plugins alone.
+        #[arg(long = "skip-plugins")]
+        skip_plugins: bool,
+        /// Leave the CLI alone (it is updated last, since it replaces this binary).
+        #[arg(long = "skip-cli")]
+        skip_cli: bool,
+    },
 
     // ── component groups ──
     /// Manage the local guard service.
