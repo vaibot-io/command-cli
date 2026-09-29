@@ -2,9 +2,40 @@
 
 All notable changes to the `vaibot` CLI (`command-cli`).
 
-## [0.7.0] — 2026-09-24 — the panic switch
+## [0.7.0] — 2026-09-28 — the panic switch, and Hermes
 
-### Added
+### Added — Hermes support
+- **`vaibot plugin add hermes`** — the fifth host. Hermes has a plugin CLI, but only
+  for enabling: the plugin is Python, so the files have to arrive first.
+
+  This delegates placement to the published npm installer
+  (`npx @vaibot/hermes-circuitbreaker-plugin install`), which fetches the wheel from
+  PyPI and verifies it against a digest pinned at its own publish time. Deliberately
+  not `pip`: that fails outright on PEP 668 systems and picks whichever interpreter is
+  on `PATH`. And deliberately not a second implementation of the digest check here —
+  one verification, for the same reason the breakers call the guard's `classify`
+  instead of growing a second classifier.
+
+  Unlike the other hosts it does **not** use the best-effort install loop. A digest
+  mismatch has to be able to fail the whole operation, and that loop only warns.
+
+  `update hermes` re-runs the installer, so it re-fetches and re-verifies.
+  `remove hermes` disables **and** deletes the directory, because `plugins disable`
+  leaves the files in place.
+
+- `supports_mcp_connect()`, separating "no MCP CLI" from "MCP surface unknown".
+  **Hermes is excluded from `vaibot mcp connect`**: nobody has established how it
+  registers an MCP server and the circuit-breaker plugin does not, so guessing at a
+  command and running it against someone's agent config would be worse than not
+  offering the feature. `mcp connect hermes` now says that instead of failing silently.
+
+### Fixed
+- `mcp connect <host>` gated the single-host path on `is_file_based()` while the
+  all-hosts path used a different rule, so a host with no MCP surface was let through
+  and then failed quietly inside `connect_one`. Both paths use one predicate now.
+- The `plugin add` host list in `README.md` was missing **cursor** as well as hermes.
+
+### Added — the panic switch
 - **`vaibot contain [--reason "..."]`** — stop every agent on this account, on
   every machine, right now. Containment is enforced before policy or classifier
   runs and holds even in observe mode; guards are pushed to, so it lands in about

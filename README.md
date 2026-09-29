@@ -62,7 +62,7 @@ to the separate daemon; three commands are tracked **stubs** (exit 2).
 | `guard {verify, provision-offline}` | *stub* (offline / air-gapped bundle verify). |
 | `gateway serve` | *shell-out* to the Rust gateway. |
 | `gateway {status, config, stop, logs}` | systemd + `/healthz`, resolved config, egress log. |
-| `plugin add <host> [--skip-guard] [--skip-plugin]` | Install a host circuit-breaker (`claudecode\|codex\|openclaw`) + ensure the shared guard. |
+| `plugin add <host> [--skip-guard] [--skip-plugin]` | Install a host circuit-breaker (`claudecode\|codex\|openclaw\|cursor\|hermes`) + ensure the shared guard. |
 | `plugin list [--json]` | Detect hosts + guard + circuit-breakers. |
 | `plugin remove <host> [--with-guard]` / `plugin update <host> [--skip-guard]` | Uninstall / upgrade an integration (the guard is shared across hosts). |
 | `policy show` / `policy history` | Active policy (floor + your additions + lock state) / audited change log. |

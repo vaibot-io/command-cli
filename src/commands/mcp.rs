@@ -57,14 +57,25 @@ fn targets(host: Option<String>) -> Result<Vec<Host>, CliError> {
         Some(h) => {
             let host = Host::parse(&h).ok_or_else(|| {
                 CliError::Runtime(format!(
-                    "Unknown host \"{h}\". Use one of: claudecode | codex | openclaw | cursor."
+                    "Unknown host \"{h}\". Use one of: claudecode | codex | openclaw | cursor | hermes."
                 ))
             })?;
-            if host.is_file_based() {
-                println!(
-                    "[info] {} MCP is file-based — add the vaibot server to ~/.cursor/mcp.json manually (no CLI to wire it).",
-                    host.label()
-                );
+            // Same predicate as the all-hosts path below. Gating on `is_file_based`
+            // here let a host through that has no MCP surface at all, which then
+            // failed silently inside connect_one instead of saying why.
+            if !host.supports_mcp_connect() {
+                if host.is_file_based() {
+                    println!(
+                        "[info] {} MCP is file-based — add the vaibot server to ~/.cursor/mcp.json manually (no CLI to wire it).",
+                        host.label()
+                    );
+                } else {
+                    println!(
+                        "[info] {} has no known MCP-registration command, so there is nothing to wire. The circuit-breaker plugin works without it — `vaibot plugin add {}`.",
+                        host.label(),
+                        host.key()
+                    );
+                }
                 return Ok(vec![]);
             }
             Ok(vec![host])
@@ -72,7 +83,7 @@ fn targets(host: Option<String>) -> Result<Vec<Host>, CliError> {
         // File-based hosts (cursor) have no MCP-registration CLI, so skip them here.
         None => Ok(Host::ALL
             .into_iter()
-            .filter(|h| h.cli_present() && !h.is_file_based())
+            .filter(|h| h.cli_present() && h.supports_mcp_connect())
             .collect()),
     }
 }
@@ -149,6 +160,12 @@ fn connect_one(h: Host, url: &str, key: &str) -> bool {
         }
         // File-based (cursor) — never a target here (filtered out in targets()).
         Host::Cursor => return false,
+        // Hermes: nobody has established how it registers an MCP server, and the
+        // circuit-breaker plugin does not. Guessing at a command and running it
+        // against someone's agent config is worse than not offering the feature, so
+        // `supports_mcp_connect()` keeps Hermes out of `targets()` and this arm
+        // refuses rather than inventing an argv.
+        Host::Hermes => return false,
     };
 
     println!("  {:<12} registering '{MCP_NAME}'…", h.label());
@@ -210,6 +227,8 @@ fn mcp_registered(h: Host) -> bool {
         Host::Codex => format!("codex mcp get {MCP_NAME}"),
         Host::Openclaw => format!("openclaw mcp show {MCP_NAME}"),
         Host::Cursor => return false,
+        // See connect_one: Hermes has no known MCP registration surface.
+        Host::Hermes => return false,
     };
     run_capture(&cmd).map(|r| r.ok).unwrap_or(false)
 }
@@ -227,6 +246,8 @@ fn disconnect(host: Option<String>) -> Result<(), CliError> {
             Host::Codex => &["mcp", "remove", MCP_NAME],
             Host::Openclaw => &["mcp", "unset", MCP_NAME],
             Host::Cursor => &[],
+            // See connect_one. Nothing was ever connected, so nothing to remove.
+            Host::Hermes => &[],
         };
         let ok = Command::new(h.cli())
             .args(args)
