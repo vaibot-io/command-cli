@@ -173,6 +173,40 @@ pub fn step(command: &str) {
     println!("       {}  {}", mark_step(), command);
 }
 
+/// Work starting now. Distinct from [`step`], which suggests a command the user
+/// might run — this reports something the CLI is doing. (`[step]` in the old
+/// vocabulary.)
+pub fn mark_run() -> String {
+    paint(if unicode_enabled() { "▸" } else { ">" }, CYAN)
+}
+
+// ─── Message printers ────────────────────────────────────────────────────────
+//
+// Call sites use these instead of writing a marker into a format string. That is
+// how the vocabulary stayed consistent: there is no way to type `[ok]` at a call
+// site and have it look right, because the marker is not part of the message.
+
+/// Something succeeded.
+pub fn ok(msg: &str) {
+    println!("  {}  {msg}", mark_ok());
+}
+/// Something needs attention but the command continues.
+pub fn warn(msg: &str) {
+    println!("  {}  {msg}", mark_warn());
+}
+/// Something failed.
+pub fn fail(msg: &str) {
+    println!("  {}  {msg}", mark_err());
+}
+/// Neutral detail.
+pub fn info(msg: &str) {
+    println!("  {}  {msg}", dim("·"));
+}
+/// Work the CLI is starting.
+pub fn activity(msg: &str) {
+    println!("  {}  {msg}", mark_run());
+}
+
 /// A block of aligned label/value rows.
 ///
 /// Collects first and measures on render, so the column width is derived from
