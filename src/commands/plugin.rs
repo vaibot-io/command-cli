@@ -530,47 +530,97 @@ fn remove_guard() {
     }
 }
 
+/// What the plugin is doing on one host.
+///
+/// `Unknown` is deliberately distinct from "not installed": codex and cursor expose no
+/// scriptable check, so claiming either answer for them would be inventing one.
+enum PluginState {
+    Installed,
+    NotInstalled,
+    Unknown,
+}
+
+impl PluginState {
+    fn json(&self) -> &'static str {
+        match self {
+            PluginState::Installed => "installed",
+            PluginState::NotInstalled => "not-installed",
+            PluginState::Unknown => "unknown",
+        }
+    }
+}
+
 fn list(json: bool) -> Result<(), CliError> {
-    let openclaw = which("openclaw").is_some();
     let guard_skill = installer::guard_skill_exists();
-    let circuit_breaker = openclaw && installer::verify_plugin();
-    let claude = which("claude").is_some();
-    let codex = which("codex").is_some();
     let guard_service = if is_active_systemd_unit("vaibot-guard") {
         "active"
     } else {
         "unknown"
     };
 
+    // Driven off Host::ALL, not a hand-written list. The previous version named
+    // openclaw, claude and codex, so cursor and hermes could not be reported at all —
+    // and `plugin list` is exactly where someone looks to confirm an install.
+    let rows: Vec<(Host, bool, PluginState)> = Host::ALL
+        .into_iter()
+        .map(|h| {
+            let present = h.cli_present();
+            // Only interrogate a host that is actually here: verify_installed shells
+            // out, and asking an absent CLI just fails slowly.
+            let state = if !present {
+                PluginState::Unknown
+            } else {
+                match h.verify_installed() {
+                    Some(true) => PluginState::Installed,
+                    Some(false) => PluginState::NotInstalled,
+                    None => PluginState::Unknown,
+                }
+            };
+            (h, present, state)
+        })
+        .collect();
+
     if json {
+        let hosts: serde_json::Map<String, serde_json::Value> = rows
+            .iter()
+            .map(|(h, present, state)| {
+                (
+                    h.key().to_string(),
+                    serde_json::json!({ "present": present, "plugin": state.json() }),
+                )
+            })
+            .collect();
         let report = serde_json::json!({
-            "hosts": {
-                "openclaw": { "present": openclaw, "guardSkill": guard_skill, "circuitBreaker": circuit_breaker },
-                "claudeCode": claude,
-                "codex": codex,
-            },
+            "guardSkill": guard_skill,
             "guardService": guard_service,
+            "hosts": hosts,
         });
         println!("{}", serde_json::to_string_pretty(&report).unwrap());
         return Ok(());
     }
 
-    println!("Installed hosts:");
-    println!("  openclaw:       {}", present(openclaw));
-    println!("    guard skill:    {}", yes_no(guard_skill));
-    println!("    circuit-breaker:{}", if circuit_breaker { " installed" } else { " no" });
-    println!("  claude-code:    {}", present(claude));
-    println!("  codex:          {}", present(codex));
-    println!("  guard service:  {guard_service}");
-    Ok(())
-}
-
-fn present(b: bool) -> &'static str {
-    if b {
-        "present"
-    } else {
-        "not found"
+    println!("Hosts:");
+    for (h, present, state) in &rows {
+        // The key, not the label, because it is the word `plugin add` takes.
+        let key = h.key();
+        if !present {
+            println!("  {key:<12} not found");
+            continue;
+        }
+        let detail = match state {
+            PluginState::Installed => "plugin installed".to_string(),
+            PluginState::NotInstalled => {
+                format!("plugin not installed — `vaibot plugin add {key}`")
+            }
+            PluginState::Unknown => "plugin unknown (host has no scriptable check)".to_string(),
+        };
+        println!("  {key:<12} present      {detail}");
     }
+
+    println!();
+    println!("  {:<15} {}", "guard skill:", yes_no(guard_skill));
+    println!("  {:<15} {}", "guard service:", guard_service);
+    Ok(())
 }
 
 fn yes_no(b: bool) -> &'static str {

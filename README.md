@@ -64,7 +64,7 @@ to the separate daemon; three commands are tracked **stubs** (exit 2).
 | `gateway serve` | *shell-out* to the Rust gateway. |
 | `gateway {status, config, stop, logs}` | systemd + `/healthz`, resolved config, egress log. |
 | `plugin add <host> [--skip-guard] [--skip-plugin]` | Install a host circuit-breaker (`claudecode\|codex\|openclaw\|cursor\|hermes`) + ensure the shared guard. |
-| `plugin list [--json]` | Detect hosts + guard + circuit-breakers. |
+| `plugin list [--json]` | Every host the CLI supports: is its CLI present, and is the circuit-breaker installed. `unknown` where the host exposes no scriptable check (codex, cursor). |
 | `plugin remove <host> [--with-guard]` / `plugin update <host> [--skip-guard]` | Uninstall / upgrade an integration (the guard is shared across hosts). |
 | `policy show` / `policy history` | Active policy (floor + your additions + lock state) / audited change log. |
 | `policy preset [flavor]` | Show or set your governance floor (`permissive\|balanced\|strict`). |

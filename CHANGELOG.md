@@ -33,7 +33,54 @@ All notable changes to the `vaibot` CLI (`command-cli`).
   A failed restart warns rather than failing: a guard running an older build is still
   governing, and the new version takes effect the next time it starts.
 
+### Fixed — Hermes (and Cursor) were not first-class in the CLI
+
+`vaibot plugin add hermes` shipped, but three surfaces still carried their own
+hand-written host lists from before the `Host` abstraction existed, so they had fallen
+behind — two of them by **two** hosts, since Cursor was missing as well:
+
+- **`vaibot init` never offered Hermes.** `INIT_HOST_ORDER` was a hardcoded 4-host
+  array, so Hermes was silently never detected and never installed by the primary
+  install flow — the reverse of the Hermes-first discovery path. Worse, the test on that
+  array asserted `len() == 4`, so it actively held the gap in place.
+
+  It is now pinned against `Host::ALL`: a host that `plugin add` supports but `init`
+  does not offer fails the suite, naming the host. Hermes runs **last**, because it is
+  the only host whose install fetches an artifact over the network (the wheel from PyPI,
+  digest-verified) and so is both the slowest and the likeliest to fail for reasons that
+  have nothing to do with the machine.
+
+- **`vaibot plugin list` could not see Hermes or Cursor at all** — it reported openclaw,
+  claude-code and codex only. This is the command someone runs to confirm an install, so
+  a Hermes user was told nothing. It now iterates `Host::ALL` and distinguishes
+  `installed` / `not installed` / `unknown`, where `unknown` means the host exposes no
+  scriptable check (codex, cursor) rather than pretending to an answer.
+
+- **`vaibot doctor` checked three host CLIs**, missing cursor and hermes. Now driven off
+  `Host::ALL`.
+
+**Breaking — `plugin list --json` shape.** The old shape could not represent five hosts
+coherently: `openclaw` was an object while `claudeCode` and `codex` were bare booleans,
+and the global `guardSkill` was nested inside `openclaw`. Every host is now an object
+under its `plugin add` key, and the two global facts sit at the top level:
+
+```json
+{
+  "guardSkill": true,
+  "guardService": "active",
+  "hosts": {
+    "claudecode": { "present": true, "plugin": "installed" },
+    "codex":      { "present": true, "plugin": "unknown" },
+    "hermes":     { "present": true, "plugin": "installed" }
+  }
+}
+```
+
+Note `claudeCode` → `claudecode`: keys are now the exact word `plugin add` accepts.
+
 ### Internal
+- `installer::verify_plugin()` removed — it was byte-for-byte the same check as
+  `Host::Openclaw.verify_installed()`, which `plugin list` now uses for every host.
 - One implementation of "update the guard", in `commands::guard::update`. The plugin
   path calls it and downgrades a failure to a warning — updating a host's plugin should
   not fail because a shared, still-working guard is stale — while `vaibot update` and

@@ -151,13 +151,6 @@ pub fn install_guard_service_platform() -> bool {
     run_step("vaibot-guard install")
 }
 
-/// Verify the plugin appears loaded (best-effort).
-pub fn verify_plugin() -> bool {
-    run_capture("openclaw plugins list")
-        .map(|r| r.ok && r.stdout.contains("circuit-breaker"))
-        .unwrap_or(false)
-}
-
 /// Uninstall the guard npm package globally (best-effort).
 pub fn uninstall_guard() -> bool {
     run_capture("npm uninstall -g @vaibot/guard")
