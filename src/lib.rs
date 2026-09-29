@@ -19,6 +19,7 @@ pub mod error;
 pub mod oauth;
 pub mod policy;
 pub mod services;
+pub mod ui;
 
 use cli::{Cli, Command};
 use error::CliError;
