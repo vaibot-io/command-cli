@@ -55,8 +55,9 @@ to the separate daemon; three commands are tracked **stubs** (exit 2).
 | `init [-y] [--env] [--api-key] [--skip-login] [--with-mcp] [--preset]` | Log in → install the guard → detect + wire agents → set a governance floor. `--with-mcp` registers the MCP server with every detected agent; `--preset permissive\|balanced\|strict`. `--with-gateway` = *stub*. |
 | `status [--json]` | Joined `GET /v2/health` + `/v2/accounts/me` (auth, health, quota). |
 | `doctor [--fix]` | Read-only stack checks. (`--fix` remediation = *stub*.) |
-| `update` | Self-update to the latest released CLI (verifies the installer and prints its SHA-256). Opt out of the background check with `VAIBOT_NO_UPDATE_CHECK=1`. |
+| `update [--cli-only] [--skip-guard] [--skip-plugins] [--skip-cli]` | Update the whole installation: the guard, every installed host plugin, then the CLI (last, because self-update replaces the running binary). `--cli-only` is the older behaviour — the CLI alone. Opt out of the background check with `VAIBOT_NO_UPDATE_CHECK=1`. |
 | `guard install` | `npm i -g @vaibot/guard@^2.0.0` + env file + systemd unit. |
+| `guard update` | Update the shared guard alone and restart it — when the plugins are current and only the guard is behind. |
 | `guard serve` | *shell-out* to the guard binary. |
 | `guard {status, restart, stop, logs, policy}` | systemd control + `/health` + `/v1/policy`. |
 | `guard {verify, provision-offline}` | *stub* (offline / air-gapped bundle verify). |

@@ -20,6 +20,8 @@ use crate::services::{is_active_systemd_unit, systemd_available};
 pub enum GuardCmd {
     /// Install the guard (npm `@vaibot/guard`) + env file + systemd unit.
     Install,
+    /// Update the guard to the latest published version, then restart it.
+    Update,
     /// Run the guard service (shells out to the separate binary).
     Serve {
         /// Args forwarded verbatim to the guard binary.
@@ -53,6 +55,7 @@ pub enum GuardCmd {
 pub async fn dispatch(cmd: GuardCmd) -> Result<(), CliError> {
     match cmd {
         GuardCmd::Install => install(),
+        GuardCmd::Update => update(),
         GuardCmd::Serve { passthrough } => serve(passthrough).await,
         GuardCmd::Status => guard_http::run_guard_status().await,
         GuardCmd::Restart => restart(),
@@ -62,6 +65,45 @@ pub async fn dispatch(cmd: GuardCmd) -> Result<(), CliError> {
         GuardCmd::Verify => Err(CliError::stub("guard verify")),
         GuardCmd::ProvisionOffline => Err(CliError::stub("guard provision-offline")),
     }
+}
+
+/// `vaibot guard update` — the guard alone.
+///
+/// Until now the only way to update the guard was as a side effect of
+/// `vaibot plugin update <host>`, which bundles "guard + that host's plugin". That
+/// bundling is deliberate and stays — someone returning after a while gets both
+/// refreshed — but it meant the shared component had no command of its own, in the
+/// one group where a person would look for it.
+///
+/// The guard is shared across every host, so this is the operation you want when the
+/// plugins are current and only the guard is behind: it reinstalls from npm and
+/// restarts the service, touching nothing else.
+pub fn update() -> Result<(), CliError> {
+    println!("[step] Updating the guard (npm {})...", installer::GUARD_NPM_SPEC);
+    if !installer::install_guard_skill() {
+        println!(
+            "[fail] Could not update the guard.\n       Try manually: npm install -g {}",
+            installer::GUARD_NPM_SPEC
+        );
+        return Err(CliError::Runtime("guard update failed".into()));
+    }
+    println!("[ok]   Guard updated.");
+
+    // The running daemon is the old build until it is restarted. Not fatal — a guard
+    // that is running an older version is still governing — so this warns rather than
+    // failing the command, and says what to do.
+    println!("[step] Restarting the guard service...");
+    if installer::restart_systemd_service() {
+        println!("[ok]   vaibot-guard.service restarted.");
+    } else {
+        println!(
+            "[warn] Could not restart the service — it may not be systemd-managed.\n       \
+             The new version takes effect when the guard next starts."
+        );
+    }
+
+    println!("\n[ok]   Guard update complete.");
+    Ok(())
 }
 
 /// `vaibot guard install` — first-class, host-agnostic guard install
