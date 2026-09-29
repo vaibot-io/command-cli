@@ -11,7 +11,7 @@ use crate::oauth::LoginOptions;
 use crate::services::guard_http;
 use crate::services::host::Host;
 use crate::services::installer;
-use crate::services::{is_active_systemd_unit, systemd_available, which};
+use crate::services::{is_active_systemd_unit, systemd_available};
 
 use super::stdout_print;
 
@@ -395,11 +395,26 @@ fn prompt_yes_no(label: &str) -> bool {
     ans.is_empty() || ans == "y" || ans == "yes"
 }
 
-/// Init plugin order: the reliable natives first, then Codex + Cursor LAST — they're
-/// the most interactive/finicky (Codex's enable picker; Cursor's git-clone install),
-/// so a hiccup there lands after everything sturdier is already in.
-const INIT_HOST_ORDER: [Host; 4] =
-    [Host::Claudecode, Host::Openclaw, Host::Codex, Host::Cursor];
+/// Init plugin order: the reliable natives first, then the awkward ones LAST, so a
+/// hiccup lands after everything sturdier is already in.
+///
+/// * Claude Code, OpenClaw — a single plugin command each, no prompts.
+/// * Codex, Cursor — most interactive/finicky (Codex's enable picker; Cursor's
+///   git-clone install).
+/// * Hermes — last. It is the only host whose install reaches the network for an
+///   artifact: the npm installer fetches the wheel from PyPI and verifies it against a
+///   pinned digest. Slowest, and the one most likely to fail for reasons that have
+///   nothing to do with this machine.
+///
+/// Every host the CLI knows about belongs here — a host missing from this list is
+/// silently never offered by `init`, which is how Hermes was invisible to it.
+const INIT_HOST_ORDER: [Host; 5] = [
+    Host::Claudecode,
+    Host::Openclaw,
+    Host::Codex,
+    Host::Cursor,
+    Host::Hermes,
+];
 
 /// Offer to install the circuit-breaker plugin for each DETECTED agent, in a fixed
 /// order, one y/n at a time. Best-effort: a failure warns and moves to the next.
@@ -410,7 +425,9 @@ async fn wire_hosts_interactive(yes: bool, summary: &mut Vec<String>) {
         .filter(|h| h.cli_present())
         .collect();
     if detected.is_empty() {
-        println!("  No agents detected on PATH (Claude Code / OpenClaw / Codex / Cursor).");
+        // Built from the list rather than written out, so it cannot drift from it again.
+        let all: Vec<&str> = INIT_HOST_ORDER.iter().map(|h| h.label()).collect();
+        println!("  No agents detected on PATH ({}).", all.join(" / "));
         println!("  Install one, then run `vaibot plugin add <host>`.");
         summary.push("plugins — none detected".into());
         return;
@@ -483,18 +500,19 @@ pub async fn doctor(fix: bool) -> Result<(), CliError> {
     }
     println!("VAIBot Doctor\n");
 
-    // Host integrations.
+    // Host integrations. Driven off Host::ALL rather than a hand-written list of
+    // `which` calls, which had fallen two hosts behind — it named openclaw, claude and
+    // codex, so cursor and hermes were invisible here.
+    for h in Host::ALL {
+        println!(
+            "  {:<20} {}",
+            format!("{} CLI:", h.cli()),
+            present(h.cli_present())
+        );
+    }
     println!(
-        "  openclaw CLI:        {}",
-        present(which("openclaw").is_some())
-    );
-    println!(
-        "  claude CLI:          {}",
-        present(which("claude").is_some())
-    );
-    println!("  codex CLI:           {}", present(which("codex").is_some()));
-    println!(
-        "  guard skill:         {}",
+        "  {:<20} {}",
+        "guard skill:",
         present(installer::guard_skill_exists())
     );
 
@@ -722,17 +740,60 @@ mod tests {
         eprintln!("RUST_FINGERPRINT={fp}");
     }
 
+    /// THE property, and the one whose absence let Hermes be invisible to `init` for a
+    /// whole release: a host the CLI otherwise supports but that is missing from this
+    /// list is never detected and never offered, silently. Pinned against `Host::ALL`
+    /// so adding a sixth host fails here until `init` is taught about it.
+    ///
+    /// The old test asserted `len() == 4`, which did the opposite — it actively held the
+    /// gap in place.
     #[test]
-    fn init_host_order_puts_codex_and_cursor_last() {
+    fn init_offers_every_host_the_cli_supports() {
         use super::INIT_HOST_ORDER;
         use crate::services::host::Host;
-        assert_eq!(INIT_HOST_ORDER.len(), 4);
-        assert!(INIT_HOST_ORDER[0] == Host::Claudecode, "Claude Code first");
-        let last_two = &INIT_HOST_ORDER[2..];
-        assert!(last_two.contains(&Host::Codex), "Codex in the last two");
-        assert!(last_two.contains(&Host::Cursor), "Cursor in the last two");
+
+        for h in Host::ALL {
+            assert!(
+                INIT_HOST_ORDER.contains(&h),
+                "{} is supported by `plugin add` but `init` never offers it",
+                h.label()
+            );
+        }
+        assert_eq!(
+            INIT_HOST_ORDER.len(),
+            Host::ALL.len(),
+            "INIT_HOST_ORDER has a duplicate or an unknown host"
+        );
+    }
+
+    #[test]
+    fn init_host_order_puts_the_awkward_hosts_last() {
+        use super::INIT_HOST_ORDER;
+        use crate::services::host::Host;
+
         let idx = |t: Host| INIT_HOST_ORDER.iter().position(|h| *h == t).unwrap();
+
+        assert_eq!(idx(Host::Claudecode), 0, "Claude Code first — most reliable");
         assert!(idx(Host::Openclaw) < idx(Host::Codex), "OpenClaw before Codex");
+
+        // Codex's enable is an interactive picker and Cursor installs by git-clone, so
+        // both come after the hosts that need neither.
+        for awkward in [Host::Codex, Host::Cursor] {
+            assert!(
+                idx(awkward) > idx(Host::Openclaw),
+                "{} should come after the frictionless natives",
+                awkward.label()
+            );
+        }
+
+        // Hermes is dead last: the only host whose install fetches an artifact over the
+        // network (the wheel from PyPI) and verifies a digest, so it is both the slowest
+        // and the likeliest to fail for reasons unrelated to this machine.
+        assert_eq!(
+            idx(Host::Hermes),
+            INIT_HOST_ORDER.len() - 1,
+            "Hermes last — it is the network-dependent install"
+        );
     }
 
     #[test]
