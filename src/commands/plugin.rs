@@ -5,6 +5,7 @@
 //!   update [REAL] — re-pull the guard + host plugin to latest.
 
 use std::time::Duration;
+use crate::ui;
 
 use clap::Subcommand;
 
@@ -86,7 +87,8 @@ async fn add(host: String, skip_guard: bool, skip_plugin: bool) -> Result<(), Cl
     // Best-effort adoption telemetry — bounded + swallowed, never blocks/fails the install.
     report_plugin_install(h).await;
 
-    println!("\n[ok]   {} plugin add complete.", h.label());
+    println!();
+    ui::ok(&format!("{} plugin add complete.", h.label()));
     Ok(())
 }
 
@@ -173,7 +175,7 @@ fn install_hermes() -> Result<(), CliError> {
     require_npx()?;
 
     let dir = installer::hermes_plugin_dir();
-    println!("[step] Installing the Hermes plugin → {}", dir.display());
+    ui::activity(&format!("Installing the Hermes plugin → {}", dir.display()));
     println!(
         "       via npx @vaibot/hermes-circuitbreaker-plugin (fetches the published\n\
          \x20      wheel from PyPI and verifies its digest)"
@@ -182,16 +184,16 @@ fn install_hermes() -> Result<(), CliError> {
     // --force so a re-run replaces an existing install rather than refusing; the
     // installer keeps the previous copy as a .bak either way.
     if !installer::run_step("npx --yes @vaibot/hermes-circuitbreaker-plugin install --force") {
+        ui::fail("Could not install the Hermes plugin.");
         println!(
-            "[fail] Could not install the Hermes plugin.\n\
-             \x20      The installer verifies the wheel against a pinned digest and refuses on a\n\
-             \x20      mismatch, so this is either a network problem or something to look at. Run it\n\
-             \x20      directly to see why:\n\
+            "\x20    The installer verifies the wheel against a pinned digest and refuses on a\n\
+             \x20    mismatch, so this is either a network problem or something to look at. Run it\n\
+             \x20    directly to see why:\n\
              \x20        npx @vaibot/hermes-circuitbreaker-plugin install --dry-run"
         );
         return Err(CliError::Runtime("hermes plugin install failed".into()));
     }
-    println!("[ok]   Plugin files installed.");
+    ui::ok("Plugin files installed.");
 
     run_narrated("Enabling the plugin", "hermes plugins enable vaibot");
     verify_after(Host::Hermes, true)?;
@@ -211,11 +213,11 @@ fn remove_hermes(with_guard: bool) -> Result<(), CliError> {
     run_narrated("Disabling the plugin", Host::Hermes.remove_cmd());
 
     let dir = installer::hermes_plugin_dir();
-    println!("[step] Removing {}...", dir.display());
+    ui::activity(&format!("Removing {}...", dir.display()));
     if installer::remove_hermes_plugin() {
-        println!("[ok]   Removed.");
+        ui::ok("Removed.");
     } else {
-        println!("[warn] Could not remove {} — delete it manually.", dir.display());
+        ui::warn(&format!("Could not remove {} — delete it manually.", dir.display()));
     }
 
     if with_guard {
@@ -223,7 +225,8 @@ fn remove_hermes(with_guard: bool) -> Result<(), CliError> {
     } else {
         println!("\nLeft the shared guard in place — other hosts may use it. Pass --with-guard to remove it too.");
     }
-    println!("\n[ok]   Hermes plugin remove complete.");
+    println!();
+    ui::ok("Hermes plugin remove complete.");
     Ok(())
 }
 
@@ -231,9 +234,10 @@ fn remove_hermes(with_guard: bool) -> Result<(), CliError> {
 /// plainly rather than letting the install fail with a shell error.
 fn require_npx() -> Result<(), CliError> {
     if which("npx").is_none() {
+        ui::fail("`npx` not found on PATH.");
         println!(
-            "[fail] `npx` not found on PATH. It ships with Node/npm, which the plugin needs anyway\n\
-             \x20      (the guard is a Node program). Install Node, then re-run."
+            "\x20    It ships with Node/npm, which the plugin needs anyway (the guard is a\n\
+             \x20    Node program). Install Node, then re-run."
         );
         return Err(CliError::Runtime("npx not found".into()));
     }
@@ -247,9 +251,9 @@ fn require_npx() -> Result<(), CliError> {
 fn install_cursor() -> Result<(), CliError> {
     require_git()?;
     let dir = installer::cursor_local_dir();
-    println!("[step] Installing the Cursor plugin → {}", dir.display());
+    ui::activity(&format!("Installing the Cursor plugin → {}", dir.display()));
     if installer::install_cursor_plugin() {
-        println!("[ok]   Installed.");
+        ui::ok("Installed.");
         println!(
             "\nFinish in Cursor:\n  \
              1. Restart Cursor (or run \"Developer: Reload Window\").\n  \
@@ -258,7 +262,7 @@ fn install_cursor() -> Result<(), CliError> {
              Prefer auto-updates? Import the repo as a marketplace in Cursor's Dashboard instead."
         );
     } else {
-        println!("[fail] Could not install the Cursor plugin. Ensure `git` is installed and github.com is reachable, then re-run.");
+        ui::fail("Could not install the Cursor plugin. Ensure `git` is installed and github.com is reachable, then re-run.");
         return Err(CliError::Runtime("cursor plugin install failed".into()));
     }
     Ok(())
@@ -269,36 +273,38 @@ fn update_cursor(skip_guard: bool) -> Result<(), CliError> {
     if !skip_guard {
         update_guard();
     }
-    println!("[step] Updating the Cursor plugin (git pull)...");
+    ui::activity("Updating the Cursor plugin (git pull)...");
     if installer::update_cursor_plugin() {
-        println!("[ok]   Updated. Restart Cursor to load the new version.");
+        ui::ok("Updated. Restart Cursor to load the new version.");
     } else {
-        println!("[warn] Could not update — run `vaibot plugin add cursor` to reinstall.");
+        ui::warn("Could not update — run `vaibot plugin add cursor` to reinstall.");
     }
-    println!("\n[ok]   Cursor plugin update complete.");
+    println!();
+    ui::ok("Cursor plugin update complete.");
     Ok(())
 }
 
 fn remove_cursor(with_guard: bool) -> Result<(), CliError> {
     let dir = installer::cursor_local_dir();
-    println!("[step] Removing the Cursor plugin ({})...", dir.display());
+    ui::activity(&format!("Removing the Cursor plugin ({})...", dir.display()));
     if installer::remove_cursor_plugin() {
-        println!("[ok]   Removed. Restart Cursor to unload it.");
+        ui::ok("Removed. Restart Cursor to unload it.");
     } else {
-        println!("[warn] Could not remove {} — delete it manually.", dir.display());
+        ui::warn(&format!("Could not remove {} — delete it manually.", dir.display()));
     }
     if with_guard {
         remove_guard();
     } else {
         println!("\nLeft the shared guard in place — other hosts may use it. Pass --with-guard to remove it too.");
     }
-    println!("\n[ok]   Cursor plugin remove complete.");
+    println!();
+    ui::ok("Cursor plugin remove complete.");
     Ok(())
 }
 
 fn require_git() -> Result<(), CliError> {
     if which("git").is_none() {
-        println!("[fail] `git` not found on PATH — it's required to install the Cursor plugin. Install git, then re-run.");
+        ui::fail("`git` not found on PATH — it's required to install the Cursor plugin. Install git, then re-run.");
         return Err(CliError::Runtime("git not found".into()));
     }
     Ok(())
@@ -315,11 +321,11 @@ fn remove(host: String, with_guard: bool) -> Result<(), CliError> {
     require_cli(h)?;
 
     let cmd = h.remove_cmd();
-    println!("[step] Removing {} plugin...", h.label());
+    ui::activity(&format!("Removing {} plugin...", h.label()));
     if installer::run_step(cmd) {
-        println!("[ok]   Removed");
+        ui::ok("Removed");
     } else {
-        println!("[warn] Remove failed — try manually: {cmd}");
+        ui::warn(&format!("Remove failed — try manually: {cmd}"));
     }
     verify_after(h, false)?;
 
@@ -329,7 +335,8 @@ fn remove(host: String, with_guard: bool) -> Result<(), CliError> {
         println!("\nLeft the shared guard in place — other hosts may use it. Pass --with-guard to remove it too.");
     }
 
-    println!("\n[ok]   {} plugin remove complete.", h.label());
+    println!();
+    ui::ok(&format!("{} plugin remove complete.", h.label()));
     Ok(())
 }
 
@@ -360,7 +367,8 @@ pub fn update_host_plugin(h: Host, skip_guard: bool) -> Result<(), CliError> {
     }
     verify_after(h, true)?;
 
-    println!("\n[ok]   {} plugin update complete.", h.label());
+    println!();
+    ui::ok(&format!("{} plugin update complete.", h.label()));
     Ok(())
 }
 
@@ -368,7 +376,7 @@ pub fn update_host_plugin(h: Host, skip_guard: bool) -> Result<(), CliError> {
 
 fn parse_host(host: &str) -> Result<Host, CliError> {
     Host::parse(host).ok_or_else(|| {
-        println!("[fail] Unknown host \"{host}\". Use one of: claudecode | codex | openclaw | cursor | hermes.");
+        ui::fail(&format!("Unknown host \"{host}\". Use one of: claudecode | codex | openclaw | cursor | hermes."));
         CliError::Runtime(format!("unknown host: {host}"))
     })
 }
@@ -376,7 +384,7 @@ fn parse_host(host: &str) -> Result<Host, CliError> {
 fn require_cli(h: Host) -> Result<(), CliError> {
     if !h.cli_present() {
         println!(
-            "[fail] {} CLI (`{}`) not found on PATH. Install {} first, then re-run.",
+            "{} CLI (`{}`) not found on PATH. Install {} first, then re-run.",
             h.label(),
             h.cli(),
             h.label()
@@ -387,11 +395,11 @@ fn require_cli(h: Host) -> Result<(), CliError> {
 }
 
 fn run_narrated(label: &str, cmd: &str) {
-    println!("[step] {label}...");
+    ui::activity(&format!("{label}..."));
     if installer::run_step(cmd) {
-        println!("[ok]   {label}");
+        ui::ok(&format!("{label}"));
     } else {
-        println!("[warn] {label} failed — try manually: {cmd}");
+        ui::warn(&format!("{label} failed — try manually: {cmd}"));
     }
 }
 
@@ -402,7 +410,7 @@ fn verify_after(h: Host, expect: bool) -> Result<(), CliError> {
     match h.verify_installed() {
         Some(present) if present == expect => {
             println!(
-                "[ok]   Verified: {} plugin is {}.",
+                "Verified: {} plugin is {}.",
                 h.label(),
                 if expect { "installed" } else { "removed" }
             );
@@ -414,11 +422,11 @@ fn verify_after(h: Host, expect: bool) -> Result<(), CliError> {
             } else {
                 "still present after remove"
             };
-            println!("[fail] Verification failed — {} plugin {what}.", h.label());
+            ui::fail(&format!("Verification failed — {} plugin {what}.", h.label()));
             Err(CliError::Runtime("plugin verification failed".into()))
         }
         None => {
-            println!("[warn] Can't auto-verify {} via its CLI.", h.label());
+            ui::warn(&format!("Can't auto-verify {} via its CLI.", h.label()));
             Ok(())
         }
     }
@@ -433,7 +441,7 @@ fn ensure_guard() -> Result<(), CliError> {
         // gate on a resolvable key to fail fast with a clear message.
         Some(_) => setup::install_guard(),
         None => {
-            println!("[fail] No API key found. Run `vaibot init` or `vaibot login` first.");
+            ui::fail("No API key found. Run `vaibot init` or `vaibot login` first.");
             Err(CliError::Runtime("no api key".into()))
         }
     }
@@ -462,7 +470,7 @@ pub fn update_everything_installed(skip_guard: bool) -> (usize, usize) {
         // the command claim more than it did.
         if let Err(e) = crate::commands::guard::update() {
             guard_failed = true;
-            println!("[warn] Guard update failed: {e}");
+            ui::warn(&format!("Guard update failed: {e}"));
         }
         println!();
     }
@@ -487,7 +495,7 @@ pub fn update_everything_installed(skip_guard: bool) -> (usize, usize) {
         // would restart the daemon four times over.
         if let Err(e) = update_host_plugin(h, true) {
             failed += 1;
-            println!("[warn] {} did not update: {e}", h.label());
+            ui::warn(&format!("{} did not update: {e}", h.label()));
         }
         println!();
     }
@@ -512,21 +520,21 @@ pub fn update_everything_installed(skip_guard: bool) -> (usize, usize) {
 /// not fail that. `vaibot guard update` and `vaibot update` take the error.
 fn update_guard() {
     if let Err(e) = crate::commands::guard::update() {
-        println!("[warn] The plugin update continues despite this: {e}");
+        ui::warn(&format!("The plugin update continues despite this: {e}"));
     }
 }
 
 fn remove_guard() {
-    println!("[step] Removing the shared guard...");
+    ui::activity("Removing the shared guard...");
     if installer::disable_systemd_service() {
-        println!("[ok]   vaibot-guard.service disabled");
+        ui::ok("vaibot-guard.service disabled");
     } else {
-        println!("[warn] Could not disable the systemd unit (may not be installed).");
+        ui::warn("Could not disable the systemd unit (may not be installed).");
     }
     if installer::uninstall_guard() {
-        println!("[ok]   Guard uninstalled (npm rm -g @vaibot/guard)");
+        ui::ok("Guard uninstalled (npm rm -g @vaibot/guard)");
     } else {
-        println!("[warn] Could not uninstall the guard — try: npm uninstall -g @vaibot/guard");
+        ui::warn("Could not uninstall the guard — try: npm uninstall -g @vaibot/guard");
     }
 }
 
@@ -654,37 +662,69 @@ fn list(json: bool) -> Result<(), CliError> {
         return Ok(());
     }
 
-    println!("Hosts:");
+    ui::header("VAIBot plugins", None);
+
+    ui::section("hosts");
+    let mut hosts = ui::Rows::new();
+    let mut missing: Vec<&str> = Vec::new();
     for (h, present, state) in &rows {
         // The key, not the label, because it is the word `plugin add` takes.
         let key = h.key();
         if !present {
-            println!("  {key:<12} not found");
+            hosts.push(
+                key,
+                format!("{}  {}", ui::mark_state(ui::State::Neutral), ui::dim("host not found")),
+            );
             continue;
         }
-        let detail = match state {
-            PluginState::Installed => "plugin installed".to_string(),
+        let (mark, detail) = match state {
+            PluginState::Installed => (ui::mark_ok(), ui::State::Good.label("installed")),
             PluginState::NotInstalled => {
-                format!("plugin not installed — `vaibot plugin add {key}`")
+                missing.push(key);
+                (ui::mark_err(), ui::State::Bad.label("not installed"))
             }
-            PluginState::Unknown => "plugin unknown (host has no scriptable check)".to_string(),
+            // The host exposes no scriptable check, so this is genuinely unknown
+            // rather than bad — don't colour it as a failure.
+            PluginState::Unknown => (
+                ui::mark_warn(),
+                format!(
+                    "{}  {}",
+                    ui::State::Attention.label("unknown"),
+                    ui::dim("(host has no scriptable check)")
+                ),
+            ),
         };
-        println!("  {key:<12} present      {detail}");
+        hosts.push(key, format!("{mark}  {detail}"));
+    }
+    hosts.render();
+    for key in &missing {
+        ui::step(&format!("vaibot plugin add {key}"));
     }
 
     println!();
-    println!("  {:<15} {}", "guard skill:", yes_no(guard_skill));
-    println!("  {:<15} {}", "guard service:", guard_service);
+    ui::section("shared guard");
+    let mut g = ui::Rows::new();
+    let (skill_mark, skill_label) = if guard_skill {
+        (ui::mark_ok(), ui::State::Good.label("installed"))
+    } else {
+        (ui::mark_err(), ui::State::Bad.label("not installed"))
+    };
+    g.push("Skill", format!("{skill_mark}  {skill_label}"));
+    let svc_state = if guard_service == "active" {
+        ui::State::Good
+    } else {
+        ui::State::Attention
+    };
+    g.push(
+        "Service",
+        format!("{}  {}", ui::mark_state(svc_state), svc_state.label(guard_service)),
+    );
+    g.render();
+
+    println!();
     Ok(())
 }
 
-fn yes_no(b: bool) -> &'static str {
-    if b {
-        "installed"
-    } else {
-        "no"
-    }
-}
 
 #[cfg(test)]
 mod tests {
